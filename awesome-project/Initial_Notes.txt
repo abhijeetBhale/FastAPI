@@ -1,0 +1,36 @@
+FastAPI 
+
+> It is a web framework for the API development with Python based standards and syntax
+
+> We need "uv" package and project manager to use and run the FastAPI , as the "uv" is very very fast.
+ 
+>Pydantic is a Python library used to validate and structure data using Python type hints. In FastAPI, Pydantic is especially important because it lets you define what data your API expects and automatically validate incoming requests.
+
+> Both Pydantic and Starlette are not optional add-ons — they are core dependencies that FastAPI is built on from the ground up.
+
+	Pydantic is used for all things data in FastAPI:
+
+	- Data validation — ensures incoming request data matches the expected types.
+	- Data serialization — converts Python objects to/from JSON.
+	- Automatic documentation — generates JSON Schema for your models, which FastAPI then puts into OpenAPI/Swagger docs.
+	- It works based on Python type hints, which is why FastAPI feels so intuitive — the same type hints you write for your function parameters are used for validation automatically. 
+
+
+	Starlette handles all the core web/HTTP functionality in FastAPI:
+
+  	- Routing
+	- WebSocket support
+	- Background tasks
+ 	- Startup and shutdown events
+	- CORS, GZip, Static Files, Streaming responses
+	- Session and Cookie support
+
+In fact, the FastAPI class directly inherits from Starlette's class, meaning anything Starlette can do, FastAPI can do too. 
+
+>Uvicorn is a lightning-fast ASGI server, built on uvloop and httptools. It is not a web framework, but a server. For example, it doesn't provide tools for routing by paths. That's something that a framework like Starlette (or FastAPI) would provide on top. It is the recommended server for Starlette and FastAPI.
+
+
+FLOW CHART for FastAPI
+
+** SQLAlchemy is an open-source Python library that serves as a comprehensive SQL toolkit and Object-Relational Mapper (ORM) for interacting with relational databases. It allows developers to manage database connections, execute queries, and map database tables to Python objects using a Pythonic domain language rather than raw SQL syntax
+
