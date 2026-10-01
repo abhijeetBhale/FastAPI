@@ -1,0 +1,7 @@
+Alembic migration environment for awesome-project.
+
+Create a migration:
+    uv run alembic revision --autogenerate -m "describe change"
+
+Apply migrations:
+    uv run alembic upgrade head
