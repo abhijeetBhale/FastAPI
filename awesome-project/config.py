@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,11 +35,33 @@ class Settings(BaseSettings):
     # Echo every SQL statement to the log. Keep False outside debugging.
     sql_echo: bool = False
 
+    # ---- app ------------------------------------------------------------
+    app_title: str = "Cargo Inspection API"
+    app_version: str = "2.0.0"
+
+    # Allowed browser origins. Never "*" in production: any website could then
+    # call this API from a user's browser.
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+            "http://localhost:5173",
+        ]
+    )
+
     # Connection pool sizing.
     db_pool_size: int = 5
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
     db_pool_recycle: int = 1800
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_origins(cls, v: object) -> object:
+        """Accept both a JSON list and a plain comma-separated string."""
+        if isinstance(v, str) and not v.strip().startswith("["):
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
 
 
 @lru_cache

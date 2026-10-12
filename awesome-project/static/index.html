@@ -188,28 +188,44 @@
         <input type="email" id="email" placeholder="you@example.com" autocomplete="email">
       </div>
       <div class="row">
+        <label for="phone">Phone <span class="hint">(optional)</span></label>
+        <input type="tel" id="phone" placeholder="+91 98765 43210">
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="row">
         <label for="cargo">Cargo type</label>
         <select id="cargo">
-          <option value="">Select cargo type</option>
-          <option value="scrap-steel">Scrap Steel</option>
-          <option value="thermal-coal">Thermal Coal</option>
-          <option value="construction-gravel">Construction Gravel</option>
-          <option value="agricultural-grain">Agricultural Grain</option>
-          <option value="other">Other</option>
+          <option value="">Loading cargo types…</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="inspStatus">Status</label>
+        <select id="inspStatus">
+          <option value="draft">Draft</option>
+          <option value="submitted" selected>Submitted</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
         </select>
       </div>
     </div>
 
     <div class="row">
+      <label for="tags">Tags <span class="hint">(optional, comma separated)</span></label>
+      <input type="text" id="tags" placeholder="urgent, heavy">
+    </div>
+
+    <div class="row">
       <label for="notes">Notes <span class="hint">(optional)</span></label>
-      <textarea id="notes" placeholder="Anything worth noting about this load…"></textarea>
+      <textarea id="notes" placeholder="Anything worth noting about this load…" style="min-height:42px"></textarea>
     </div>
 
     <div class="err" id="err1"></div>
 
     <div class="actions">
       <button class="primary" id="toImage">Continue to image</button>
-      <span class="hint">All fields except notes are required.</span>
+      <span class="hint">Name, email and cargo type are required.</span>
     </div>
   </div>
 
@@ -218,7 +234,7 @@
     <h2><span class="step">2</span> Upload the image</h2>
     <p class="sub">
       Submitting as <strong id="whoLabel"></strong> for
-      <strong id="cargoLabel"></strong>.
+      <strong id="cargoLabel"></strong><span id="addrLabel"></span>.
       <button class="ghost" id="back" style="padding:3px 10px;font-size:12px;margin-left:6px">change</button>
     </p>
 
@@ -268,15 +284,31 @@
 <script>
 const $ = id => document.getElementById(id);
 
-const CARGO = {
-  "scrap-steel": "Scrap Steel",
-  "thermal-coal": "Thermal Coal",
-  "construction-gravel": "Construction Gravel",
-  "agricultural-grain": "Agricultural Grain",
-  "other": "Other"
-};
-
+// Cargo types come from the database lookup table, not hardcoded here.
+// `slug -> label` is filled in at load time.
+const CARGO = {};
 let picked = null;
+
+/* Populate the cargo dropdown from GET /inspections/cargo-types. */
+async function loadCargoTypes() {
+  const sel = $("cargo");
+  try {
+    const res = await fetch("/inspections/cargo-types");
+    const types = await res.json();
+    sel.innerHTML = '<option value="">Select cargo type</option>';
+    types.forEach(t => {
+      CARGO[t.slug] = t.label;
+      const opt = document.createElement("option");
+      opt.value = t.slug;
+      opt.textContent = t.label +
+        (t.density_kg_m3 ? ` (${t.density_kg_m3} kg/m³)` : "");
+      sel.appendChild(opt);
+    });
+  } catch {
+    sel.innerHTML = '<option value="other">Other</option>';
+    CARGO["other"] = "Other";
+  }
+}
 
 function showErr(id, msg) {
   const el = $(id);
@@ -289,15 +321,21 @@ $("toImage").addEventListener("click", () => {
   const name = $("name").value.trim();
   const email = $("email").value.trim();
   const cargo = $("cargo").value;
+  const phoneRaw = $("phone").value.trim();
 
   if (!name)  return showErr("err1", "Name is required.");
   if (!email) return showErr("err1", "Email is required.");
   if (!/^\S+@\S+\.\S+$/.test(email)) return showErr("err1", "Enter a valid email address.");
+  if (phoneRaw) {
+    const digits = phoneRaw.replace(/[\s\-()+.]/g, "");
+    if (!/^\d{10,15}$/.test(digits)) return showErr("err1", "Phone must be 10-15 digits.");
+  }
   if (!cargo) return showErr("err1", "Please select a cargo type.");
 
   showErr("err1", "");
   $("whoLabel").textContent = name;
   $("cargoLabel").textContent = CARGO[cargo];
+  $("addrLabel").textContent = phoneRaw ? `, phone ${phoneRaw}` : "";
   $("card2").style.display = "block";
   $("card2").scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
@@ -360,16 +398,29 @@ $("submit").addEventListener("click", async () => {
   form.append("name", $("name").value.trim());
   form.append("email", $("email").value.trim());
   form.append("cargo_type", $("cargo").value);
+  const phone = $("phone").value.trim();
+  if (phone) form.append("phone", phone);
   const notes = $("notes").value.trim();
   if (notes) form.append("notes", notes);
+  const tags = $("tags").value.trim();
+  if (tags) form.append("tags", tags);
+  form.append("status", $("inspStatus").value);
   form.append("image", picked);
+
+  // Lets a retry after a timeout return the original row instead of
+  // creating a duplicate.
+  const key = "ui-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
 
   $("submit").disabled = true;
   $("busy").style.display = "inline";
   showErr("err2", "");
 
   try {
-    const res = await fetch("/inspections/", { method: "POST", body: form });
+    const res = await fetch("/inspections/", {
+      method: "POST",
+      body: form,
+      headers: { "Idempotency-Key": key }
+    });
     const payload = await res.json();
 
     if (!res.ok) {
@@ -400,9 +451,14 @@ function renderResult(r) {
 
   const rows = [
     ["Inspection ID", r.id],
+    ["Status", r.status],
+    ["Linked user ID", r.user_id],
     ["Name", r.name],
     ["Email", r.email],
-    ["Cargo type", CARGO[r.cargo_type] || r.cargo_type],
+    ["Phone", r.phone || "— (none)"],
+    ["Cargo type", `${r.cargo_label || r.cargo_type}` +
+      (r.density_kg_m3 ? ` (${r.density_kg_m3} kg/m³)` : "")],
+    ["Tags", (r.tags || []).map(t => t.name).join(", ") || "— (none)"],
     ["Notes", r.notes || "—"],
     ["Original filename", r.image_original_name],
     ["Stored as", r.image_filename],
@@ -428,6 +484,8 @@ function escapeHtml(s) {
 }
 
 $("again").addEventListener("click", () => location.reload());
+
+loadCargoTypes();
 </script>
 
 </body>

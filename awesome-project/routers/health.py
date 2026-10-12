@@ -3,6 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
+from config import get_settings
 from database import get_db
 from schemas.responses.health import HealthResponse, ReadinessResponse
 from services.health_service import HealthService
@@ -14,12 +15,11 @@ router = APIRouter(tags=["Health"])
 def health():
     """Process-level check. Does not touch the database, so it stays fast and
     keeps reporting healthy during a database outage."""
-    from main import app
-
+    settings = get_settings()
     return HealthResponse(
         status="ok",
-        service=app.title,
-        version=app.version,
+        service=settings.app_title,
+        version=settings.app_version,
         timestamp=datetime.now(),
     )
 
