@@ -47,6 +47,12 @@ class Inspection(Base):
         ),
         # Declared so autogenerate keeps them; created in migration 0008.
         Index("ix_inspections_created_at", "created_at"),
+        # The review queue: submitted and not yet deleted, oldest first.
+        Index(
+            "ix_inspections_pending_review",
+            "created_at",
+            postgresql_where=text("status = 'submitted' AND deleted_at IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -56,11 +62,26 @@ class Inspection(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id"), nullable=False, index=True
     )
+
+    # ---- review -----------------------------------------------------------
+    # Who made the approve/reject decision, and when. Set by an admin; a user
+    # can never populate these.
+    reviewed_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     cargo_type_id: Mapped[int] = mapped_column(
         ForeignKey("cargo_types.id"), nullable=False, index=True
     )
 
-    user: Mapped["User"] = relationship(lazy="selectin")
+    # `foreign_keys` disambiguates the two paths to `users`: this relationship
+    # is the submitter, not the reviewer (see `reviewer` below).
+    user: Mapped["User"] = relationship(
+        lazy="selectin", foreign_keys=[user_id], back_populates="inspections"
+    )
+    reviewer: Mapped[Optional["User"]] = relationship(
+        lazy="selectin", foreign_keys=[reviewed_by]
+    )
     # Named `cargo_type_ref` because `cargo_type` is a property returning the
     # slug; a relationship of the same name would be shadowed.
     cargo_type_ref: Mapped["CargoType"] = relationship(

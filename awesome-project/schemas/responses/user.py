@@ -10,6 +10,7 @@ class UserResponse(BaseModel):
     email: str
     phone: Optional[str] = None
     is_active: bool
+    role: str = "user"
     created_at: datetime
 
     model_config = {"from_attributes": True}

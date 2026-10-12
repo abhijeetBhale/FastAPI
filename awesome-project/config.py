@@ -10,6 +10,7 @@ Values come from real environment variables, or from a `.env` file next to
 
 from __future__ import annotations
 
+import secrets
 from functools import lru_cache
 
 from pydantic import Field, field_validator
@@ -48,6 +49,17 @@ class Settings(BaseSettings):
             "http://localhost:5173",
         ]
     )
+
+    # ---- auth ------------------------------------------------------------
+    # Signs session tokens. MUST be overridden in production via the
+    # environment; the generated fallback is only for local development.
+    jwt_secret: str = Field(
+        default_factory=lambda: secrets.token_urlsafe(48)
+    )
+    jwt_expires_hours: int = 12
+    # Set true once the app is served over HTTPS, so the cookie is not sent
+    # in the clear.
+    cookie_secure: bool = False
 
     # Connection pool sizing.
     db_pool_size: int = 5

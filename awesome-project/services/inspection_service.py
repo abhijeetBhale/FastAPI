@@ -494,17 +494,23 @@ class InspectionService:
         ).all()
         return [dict(r._mapping) for r in rows]
 
-    def stats(self) -> dict[str, Any]:
-        """Headline numbers for a dashboard."""
-        row = self.db.execute(
-            select(
-                func.count(Inspection.id),
-                func.count(Inspection.id).filter(Inspection.status == "approved"),
-                func.count(Inspection.id).filter(Inspection.status == "rejected"),
-                func.coalesce(func.sum(Inspection.estimated_weight_kg), 0.0),
-            ).where(Inspection.deleted_at.is_(None))
-        ).one()
-        total, approved, rejected, weight = row
+    def stats(self, user_id: int | None = None) -> dict[str, Any]:
+        """Headline numbers, optionally scoped to one user.
+
+        `user_id` is applied in the WHERE clause rather than by filtering in
+        Python, so the aggregate stays a single database round trip.
+        """
+        stmt = select(
+            func.count(Inspection.id),
+            func.count(Inspection.id).filter(Inspection.status == "approved"),
+            func.count(Inspection.id).filter(Inspection.status == "rejected"),
+            func.coalesce(func.sum(Inspection.estimated_weight_kg), 0.0),
+        ).where(Inspection.deleted_at.is_(None))
+
+        if user_id is not None:
+            stmt = stmt.where(Inspection.user_id == user_id)
+
+        total, approved, rejected, weight = self.db.execute(stmt).one()
         return {
             "inspections": total,
             "approved": approved,

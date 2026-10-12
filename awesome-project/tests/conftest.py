@@ -75,7 +75,12 @@ def db():
 
 @pytest.fixture
 def client(db):
-    """TestClient bound to the same rolled-back session."""
+    """TestClient bound to the same rolled-back session.
+
+    The RBAC middleware reads `app.state.session_factory` directly, so it must
+    be pointed at the test transaction too — otherwise it would open its own
+    connection and not see any of the test's uncommitted rows.
+    """
     from fastapi.testclient import TestClient
 
     import database
@@ -88,9 +93,54 @@ def client(db):
             pass
 
     main.app.dependency_overrides[database.get_db] = override_get_db
+    previous_factory = getattr(main.app.state, "session_factory", None)
+    main.app.state.session_factory = lambda: db
+
     with TestClient(main.app, raise_server_exceptions=False) as c:
         yield c
+
     main.app.dependency_overrides.clear()
+    main.app.state.session_factory = previous_factory
+
+
+@pytest.fixture
+def admin_client(db):
+    """A client signed in as an administrator.
+
+    The cross-user `/inspections/...` routes are RBAC-protected, so any test
+    exercising those needs this rather than the plain `client`.
+    """
+    from fastapi.testclient import TestClient
+
+    import database
+    import main
+    from models.user import User
+
+    def override_get_db():
+        try:
+            yield db
+        finally:
+            pass
+
+    main.app.dependency_overrides[database.get_db] = override_get_db
+    previous_factory = getattr(main.app.state, "session_factory", None)
+    main.app.state.session_factory = lambda: db
+
+    db.add(User(name="Admin", email="admin@example.com",
+                role="admin",
+                password_hash=__import__(
+                    "services.security", fromlist=["hash_password"]
+                ).hash_password("quay-crane-42")))
+    db.commit()
+
+    with TestClient(main.app, raise_server_exceptions=False) as c:
+        r = c.post("/auth/login",
+                    json={"email": "admin@example.com", "password": "quay-crane-42"})
+        assert r.status_code == 200, r.text
+        yield c
+
+    main.app.dependency_overrides.clear()
+    main.app.state.session_factory = previous_factory
 
 
 @pytest.fixture

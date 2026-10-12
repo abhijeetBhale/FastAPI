@@ -34,7 +34,7 @@ def queries():
 
 
 @pytest.fixture
-def seeded(client, png_bytes):
+def seeded(admin_client, png_bytes):
     """Three inspections, two users, varied cargo types and tags."""
     made = []
     for name, email, cargo, tags in [
@@ -42,7 +42,7 @@ def seeded(client, png_bytes):
         ("Beta", "beta@example.com", "thermal-coal", "heavy"),
         ("Gamma", "gamma@example.com", "scrap-steel", "urgent"),
     ]:
-        r = client.post(
+        r = admin_client.post(
             "/inspections/",
             data={
                 "name": name,
@@ -60,14 +60,14 @@ def seeded(client, png_bytes):
 
 class TestNoN1Queries:
     def test_listing_many_inspections_uses_a_fixed_number_of_queries(
-        self, client, seeded, queries
+        self, admin_client, seeded, queries
     ):
         """Serialising user/cargo/tags must not issue a query per row."""
         # Warm the connection so pool setup is not counted.
-        client.get("/inspections/?limit=1")
+        admin_client.get("/inspections/?limit=1")
         queries.clear()
 
-        r = client.get("/inspections/?limit=100")
+        r = admin_client.get("/inspections/?limit=100")
         assert r.status_code == 200
         assert len(r.json()["items"]) == 3
 
@@ -80,51 +80,51 @@ class TestNoN1Queries:
 
 
 class TestFiltering:
-    def test_filter_by_cargo_type(self, client, seeded):
-        r = client.get("/inspections/?cargo_type=scrap-steel")
+    def test_filter_by_cargo_type(self, admin_client, seeded):
+        r = admin_client.get("/inspections/?cargo_type=scrap-steel")
         assert r.status_code == 200
         assert r.json()["total"] == 2
 
-    def test_filter_by_status(self, client, seeded):
-        assert client.get("/inspections/?status=submitted").json()["total"] == 3
-        assert client.get("/inspections/?status=approved").json()["total"] == 0
+    def test_filter_by_status(self, admin_client, seeded):
+        assert admin_client.get("/inspections/?status=submitted").json()["total"] == 3
+        assert admin_client.get("/inspections/?status=approved").json()["total"] == 0
 
-    def test_filter_by_tag(self, client, seeded):
-        r = client.get("/inspections/?tag=urgent")
+    def test_filter_by_tag(self, admin_client, seeded):
+        r = admin_client.get("/inspections/?tag=urgent")
         assert r.json()["total"] == 2
 
-    def test_search_matches_notes_name_and_filename(self, client, seeded):
-        assert client.get("/inspections/?search=Beta").json()["total"] == 1
-        assert client.get("/inspections/?search=Alpha").json()["total"] == 1
-        assert client.get("/inspections/?search=alpha@example").json()["total"] == 1
+    def test_search_matches_notes_name_and_filename(self, admin_client, seeded):
+        assert admin_client.get("/inspections/?search=Beta").json()["total"] == 1
+        assert admin_client.get("/inspections/?search=Alpha").json()["total"] == 1
+        assert admin_client.get("/inspections/?search=alpha@example").json()["total"] == 1
 
-    def test_combined_filters_are_anded(self, client, seeded):
-        r = client.get("/inspections/?cargo_type=scrap-steel&tag=heavy")
+    def test_combined_filters_are_anded(self, admin_client, seeded):
+        r = admin_client.get("/inspections/?cargo_type=scrap-steel&tag=heavy")
         assert r.json()["total"] == 1
 
-    def test_unknown_status_is_422(self, client, seeded):
-        assert client.get("/inspections/?status=bogus").status_code == 422
+    def test_unknown_status_is_422(self, admin_client, seeded):
+        assert admin_client.get("/inspections/?status=bogus").status_code == 422
 
-    def test_unknown_sort_column_is_422(self, client, seeded):
-        assert client.get("/inspections/?sort=image_filename").status_code == 422
+    def test_unknown_sort_column_is_422(self, admin_client, seeded):
+        assert admin_client.get("/inspections/?sort=image_filename").status_code == 422
 
-    def test_sort_is_not_sql_injectable(self, client, seeded):
+    def test_sort_is_not_sql_injectable(self, admin_client, seeded):
         # Whitelisted, never interpolated. Must be rejected, not executed.
-        r = client.get("/inspections/?sort=id;DROP TABLE users")
+        r = admin_client.get("/inspections/?sort=id;DROP TABLE users")
         assert r.status_code == 422
-        assert client.get("/users/").status_code == 200
+        assert admin_client.get("/users/").status_code == 200
 
 
 class TestPagination:
-    def test_envelope_reports_totals(self, client, seeded):
-        r = client.get("/inspections/?limit=2").json()
+    def test_envelope_reports_totals(self, admin_client, seeded):
+        r = admin_client.get("/inspections/?limit=2").json()
         assert r["total"] == 3
         assert len(r["items"]) == 2
         assert r["pages"] == 2
 
-    def test_pages_do_not_overlap(self, client, seeded):
-        first = client.get("/inspections/?skip=0&limit=2&sort=id").json()
-        second = client.get("/inspections/?skip=2&limit=2&sort=id").json()
+    def test_pages_do_not_overlap(self, admin_client, seeded):
+        first = admin_client.get("/inspections/?skip=0&limit=2&sort=id").json()
+        second = admin_client.get("/inspections/?skip=2&limit=2&sort=id").json()
         ids_a = {i["id"] for i in first["items"]}
         ids_b = {i["id"] for i in second["items"]}
         assert ids_a and ids_b
@@ -132,36 +132,36 @@ class TestPagination:
 
 
 class TestSoftDelete:
-    def test_deleted_rows_are_hidden(self, client, seeded):
+    def test_deleted_rows_are_hidden(self, admin_client, seeded):
         victim = seeded[0]["id"]
-        assert client.delete(f"/inspections/{victim}").status_code == 204
+        assert admin_client.delete(f"/inspections/{victim}").status_code == 204
 
-        assert client.get(f"/inspections/{victim}").status_code == 404
-        assert client.get("/inspections/").json()["total"] == 2
+        assert admin_client.get(f"/inspections/{victim}").status_code == 404
+        assert admin_client.get("/inspections/").json()["total"] == 2
 
-    def test_deleted_rows_can_be_listed_explicitly(self, client, seeded):
-        client.delete(f"/inspections/{seeded[0]['id']}")
-        r = client.get("/inspections/?include_deleted=true")
+    def test_deleted_rows_can_be_listed_explicitly(self, admin_client, seeded):
+        admin_client.delete(f"/inspections/{seeded[0]['id']}")
+        r = admin_client.get("/inspections/?include_deleted=true")
         assert r.json()["total"] == 3
 
-    def test_restore_brings_the_row_back(self, client, seeded):
+    def test_restore_brings_the_row_back(self, admin_client, seeded):
         victim = seeded[0]["id"]
-        client.delete(f"/inspections/{victim}")
-        assert client.post(f"/inspections/{victim}/restore").status_code == 200
-        assert client.get(f"/inspections/{victim}").status_code == 200
+        admin_client.delete(f"/inspections/{victim}")
+        assert admin_client.post(f"/inspections/{victim}/restore").status_code == 200
+        assert admin_client.get(f"/inspections/{victim}").status_code == 200
 
-    def test_purge_removes_it_for_good(self, client, seeded):
+    def test_purge_removes_it_for_good(self, admin_client, seeded):
         victim = seeded[0]["id"]
-        assert client.delete(f"/inspections/{victim}/purge").status_code == 204
+        assert admin_client.delete(f"/inspections/{victim}/purge").status_code == 204
         assert (
-            client.get(f"/inspections/{victim}?include_deleted=true").status_code
+            admin_client.get(f"/inspections/{victim}?include_deleted=true").status_code
             == 404
         )
 
 
 class TestAggregates:
-    def test_per_user_summary(self, client, seeded):
-        r = client.get("/inspections/summary")
+    def test_per_user_summary(self, admin_client, seeded):
+        r = admin_client.get("/inspections/summary")
         assert r.status_code == 200
         rows = {row["email"]: row for row in r.json()}
         alpha = rows["alpha@example.com"]
@@ -169,33 +169,33 @@ class TestAggregates:
         assert alpha["approved_count"] == 0
         assert alpha["last_inspection_at"] is not None
 
-    def test_summary_is_ordered_by_volume(self, client, seeded):
-        rows = client.get("/inspections/summary").json()
+    def test_summary_is_ordered_by_volume(self, admin_client, seeded):
+        rows = admin_client.get("/inspections/summary").json()
         counts = [r["inspection_count"] for r in rows]
         assert counts == sorted(counts, reverse=True)
 
-    def test_summary_includes_a_user_with_no_inspections(self, client, seeded):
-        client.post("/users/", json={"name": "Nobody", "email": "nobody@example.com"})
-        rows = {r["email"]: r for r in client.get("/inspections/summary").json()}
+    def test_summary_includes_a_user_with_no_inspections(self, admin_client, seeded):
+        admin_client.post("/users/", json={"name": "Nobody", "email": "nobody@example.com"})
+        rows = {r["email"]: r for r in admin_client.get("/inspections/summary").json()}
         # outerjoin, not innerjoin: zero-inspection users must still appear.
         assert rows["nobody@example.com"]["inspection_count"] == 0
         assert rows["nobody@example.com"]["total_weight_kg"] == 0.0
 
-    def test_stats_headline_numbers(self, client, seeded):
-        r = client.get("/inspections/stats").json()
+    def test_stats_headline_numbers(self, admin_client, seeded):
+        r = admin_client.get("/inspections/stats").json()
         assert r["inspections"] == 3
         assert r["approved"] == 0
 
-    def test_summary_excludes_soft_deleted(self, client, seeded):
-        client.delete(f"/inspections/{seeded[0]['id']}")
-        r = client.get("/inspections/summary").json()
+    def test_summary_excludes_soft_deleted(self, admin_client, seeded):
+        admin_client.delete(f"/inspections/{seeded[0]['id']}")
+        r = admin_client.get("/inspections/summary").json()
         alpha = [x for x in r if x["email"] == "alpha@example.com"][0]
         assert alpha["inspection_count"] == 0
 
-    def test_orphaned_users_uses_not_exists(self, client, seeded):
+    def test_orphaned_users_uses_not_exists(self, admin_client, seeded):
         # A user who exists but has never submitted an inspection.
-        client.post("/users/", json={"name": "Idle", "email": "idle@example.com"})
-        r = client.get("/inspections/orphaned-users")
+        admin_client.post("/users/", json={"name": "Idle", "email": "idle@example.com"})
+        r = admin_client.get("/inspections/orphaned-users")
         assert r.status_code == 200
         emails = {u["email"] for u in r.json()}
         assert "idle@example.com" in emails
@@ -203,20 +203,20 @@ class TestAggregates:
 
 
 class TestStatusWorkflow:
-    def test_patch_status(self, client, seeded):
-        r = client.patch(
+    def test_patch_status(self, admin_client, seeded):
+        r = admin_client.patch(
             f"/inspections/{seeded[0]['id']}",
             json={"status": "approved", "status_note": "looks fine"},
         )
         assert r.status_code == 200
         assert r.json()["status"] == "approved"
 
-    def test_invalid_status_is_rejected(self, client, seeded):
-        r = client.patch(f"/inspections/{seeded[0]['id']}", json={"status": "nope"})
+    def test_invalid_status_is_rejected(self, admin_client, seeded):
+        r = admin_client.patch(f"/inspections/{seeded[0]['id']}", json={"status": "nope"})
         assert r.status_code == 422
 
-    def test_create_with_explicit_status(self, client, png_bytes):
-        r = client.post(
+    def test_create_with_explicit_status(self, admin_client, png_bytes):
+        r = admin_client.post(
             "/inspections/",
             data={"name": "D", "email": "d@example.com",
                   "cargo_type": "other", "status": "draft"},
@@ -227,8 +227,9 @@ class TestStatusWorkflow:
 
 class TestIdempotency:
     def test_replay_returns_the_original_without_duplicating(
-        self, client, png_bytes
+        self, admin_client, png_bytes
     ):
+        """A retried POST carrying the same key returns the original row."""
         payload = {
             "name": "Idem",
             "email": "idem@example.com",
@@ -236,32 +237,32 @@ class TestIdempotency:
         }
         files = {"image": ("a.png", png_bytes(), "image/png")}
 
-        first = client.post(
+        first = admin_client.post(
             "/inspections/", data=payload, files=files,
             headers={"Idempotency-Key": "key-abc-123"},
         )
         assert first.status_code == 201
 
-        second = client.post(
+        second = admin_client.post(
             "/inspections/", data=payload, files=files,
             headers={"Idempotency-Key": "key-abc-123"},
         )
         assert second.status_code == 201
         assert second.json()["id"] == first.json()["id"]
-        assert client.get("/inspections/").json()["total"] == 1
+        assert admin_client.get("/inspections/").json()["total"] == 1
 
-    def test_different_keys_create_different_rows(self, client, png_bytes):
+    def test_different_keys_create_different_rows(self, admin_client, png_bytes):
         payload = {"name": "K", "email": "k@example.com", "cargo_type": "other"}
         files = {"image": ("a.png", png_bytes(), "image/png")}
-        a = client.post("/inspections/", data=payload, files=files,
+        a = admin_client.post("/inspections/", data=payload, files=files,
                         headers={"Idempotency-Key": "k1"})
-        b = client.post("/inspections/", data=payload, files=files,
+        b = admin_client.post("/inspections/", data=payload, files=files,
                         headers={"Idempotency-Key": "k2"})
         assert a.json()["id"] != b.json()["id"]
 
 
 class TestAuditTrail:
-    def test_creation_is_audited(self, client, seeded, db):
+    def test_creation_is_audited(self, admin_client, seeded, db):
         from models.audit_log import AuditLog
 
         insp = seeded[0]
@@ -273,11 +274,11 @@ class TestAuditTrail:
         )
         assert any(e.action == "create" for e in entries)
 
-    def test_status_change_is_audited(self, client, seeded, db):
+    def test_status_change_is_audited(self, admin_client, seeded, db):
         from models.audit_log import AuditLog
 
         insp = seeded[0]
-        client.patch(f"/inspections/{insp['id']}", json={"status": "approved"})
+        admin_client.patch(f"/inspections/{insp['id']}", json={"status": "approved"})
         actions = [
             e.action
             for e in db.query(AuditLog)
@@ -289,20 +290,20 @@ class TestAuditTrail:
 
 
 class TestCargoTypeLookup:
-    def test_lookup_table_is_seeded(self, client):
-        r = client.get("/inspections/cargo-types")
+    def test_lookup_table_is_seeded(self, admin_client):
+        r = admin_client.get("/inspections/cargo-types")
         assert r.status_code == 200
         slugs = {c["slug"] for c in r.json()}
         assert {"scrap-steel", "thermal-coal", "construction-gravel",
                 "agricultural-grain", "other"} <= slugs
 
-    def test_densities_are_exposed(self, client):
-        types = {c["slug"]: c for c in client.get("/inspections/cargo-types").json()}
+    def test_densities_are_exposed(self, admin_client):
+        types = {c["slug"]: c for c in admin_client.get("/inspections/cargo-types").json()}
         assert types["scrap-steel"]["density_kg_m3"] == 7850.0
         assert types["thermal-coal"]["density_kg_m3"] == 800.0
 
-    def test_unknown_slug_falls_back_to_other(self, client, png_bytes):
-        r = client.post(
+    def test_unknown_slug_falls_back_to_other(self, admin_client, png_bytes):
+        r = admin_client.post(
             "/inspections/",
             data={"name": "X", "email": "x@fallback.com",
                   "cargo_type": "unobtainium"},
@@ -311,8 +312,8 @@ class TestCargoTypeLookup:
         assert r.status_code == 201
         assert r.json()["cargo_type"] == "other"
 
-    def test_response_includes_label_and_density(self, client, png_bytes):
-        r = client.post(
+    def test_response_includes_label_and_density(self, admin_client, png_bytes):
+        r = admin_client.post(
             "/inspections/",
             data={"name": "Y", "email": "y@label.com",
                   "cargo_type": "thermal-coal"},
@@ -323,18 +324,18 @@ class TestCargoTypeLookup:
 
 
 class TestTags:
-    def test_tags_round_trip(self, client, seeded):
-        r = client.get(f"/inspections/{seeded[0]['id']}").json()
+    def test_tags_round_trip(self, admin_client, seeded):
+        r = admin_client.get(f"/inspections/{seeded[0]['id']}").json()
         assert {t["name"] for t in r["tags"]} == {"urgent", "heavy"}
 
-    def test_tags_are_reused_not_duplicated(self, client, seeded, db):
+    def test_tags_are_reused_not_duplicated(self, admin_client, seeded, db):
         from models.tag import Tag
 
         names = [t.name for t in db.query(Tag).order_by(Tag.name).all()]
         assert names.count("urgent") == 1
 
-    def test_patch_replaces_tags(self, client, seeded):
-        r = client.patch(
+    def test_patch_replaces_tags(self, admin_client, seeded):
+        r = admin_client.patch(
             f"/inspections/{seeded[0]['id']}", json={"tags": ["recheck"]}
         )
         assert {t["name"] for t in r.json()["tags"]} == {"recheck"}

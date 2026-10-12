@@ -3,490 +3,794 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cargo Inspection — Upload</title>
+<title>Cargo Portal</title>
 <style>
   :root {
-    --bg: #0f1216;
-    --panel: #171c22;
-    --panel-2: #1e252d;
-    --line: #2a333d;
-    --text: #e6edf3;
-    --muted: #93a1b0;
-    --accent: #4f9cf9;
-    --accent-dim: #1f4b7a;
-    --ok: #3fb950;
-    --err: #f85149;
+    --bg:#0f1216; --panel:#171c22; --panel2:#1e252d; --line:#2a333d;
+    --text:#e6edf3; --muted:#93a1b0; --accent:#4f9cf9; --accent-dim:#1f4b7a;
+    --ok:#3fb950; --warn:#d29922; --err:#f85149;
   }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-  }
-  header {
-    padding: 22px 28px;
-    border-bottom: 1px solid var(--line);
-    display: flex;
-    align-items: baseline;
-    gap: 14px;
-    flex-wrap: wrap;
-  }
-  header h1 { margin: 0; font-size: 19px; letter-spacing: .2px; }
-  header span { color: var(--muted); font-size: 13px; }
-  .wrap { max-width: 940px; margin: 0 auto; padding: 26px 20px 60px; }
-  .card {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 20px 22px;
-    margin-bottom: 18px;
-  }
-  .card h2 {
-    margin: 0 0 4px;
-    font-size: 15px;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-  }
-  .step {
-    width: 22px; height: 22px;
-    border-radius: 50%;
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-size: 12px; font-weight: 700;
-    display: grid; place-items: center;
-    flex: 0 0 auto;
-  }
-  .card p.sub { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
-  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-  input[type=text], input[type=email], select, textarea {
-    width: 100%;
-    padding: 10px 12px;
-    background: var(--panel-2);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    color: var(--text);
-    font: inherit;
-    outline: none;
-  }
-  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
-  textarea { resize: vertical; min-height: 74px; }
-  .row { margin-bottom: 15px; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-  @media (max-width: 620px) { .grid2 { grid-template-columns: 1fr; } }
-  .drop {
-    border: 2px dashed var(--line);
-    border-radius: 10px;
-    padding: 26px 18px;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color .15s, background .15s;
-  }
-  .drop:hover, .drop.over { border-color: var(--accent); background: #16202b; }
-  .drop .big { font-size: 14px; color: var(--text); }
-  .drop .small { font-size: 12px; color: var(--muted); margin-top: 5px; }
-  .visually-hidden {
-    position: absolute;
-    width: 1px; height: 1px;
-    margin: -1px; padding: 0;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-    border: 0;
-  }
-  .preview { margin-top: 15px; display: none; }
-  .preview img {
-    max-width: 100%;
-    max-height: 320px;
-    border-radius: 9px;
-    border: 1px solid var(--line);
-    display: block;
-  }
-  .preview .meta { font-size: 12px; color: var(--muted); margin-top: 8px; }
-  button {
-    padding: 10px 18px;
-    border-radius: 8px;
-    border: 1px solid transparent;
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .primary { background: var(--accent); color: #07131f; }
-  .primary:hover:not(:disabled) { background: #6bb0ff; }
-  .ghost { background: transparent; color: var(--muted); border-color: var(--line); }
-  .ghost:hover { color: var(--text); border-color: var(--muted); }
-  button:disabled { opacity: .5; cursor: not-allowed; }
-  .actions { display: flex; gap: 10px; align-items: center; margin-top: 18px; }
-  .hint { font-size: 12px; color: var(--muted); }
-  .err {
-    background: #2a1618;
-    border: 1px solid #6b2b28;
-    color: #ffb4ae;
-    border-radius: 8px;
-    padding: 11px 13px;
-    font-size: 13px;
-    margin-top: 14px;
-    display: none;
-    white-space: pre-wrap;
-  }
-  /* results */
-  .result-grid { display: grid; grid-template-columns: 168px 1fr; gap: 18px; }
-  @media (max-width: 620px) { .result-grid { grid-template-columns: 1fr; } }
-  .result-grid img {
-    width: 100%;
-    border-radius: 9px;
-    border: 1px solid var(--line);
-  }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  td { padding: 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-  td:first-child { color: var(--muted); width: 45%; }
-  td:last-child { word-break: break-all; }
-  .badge {
-    display: inline-block;
-    background: #16301f;
-    color: var(--ok);
-    border: 1px solid #2c5a38;
-    border-radius: 999px;
-    padding: 2px 10px;
-    font-size: 11px;
-    font-weight: 700;
-    margin-bottom: 12px;
-  }
-  .rec { display: none; }
-  .rec.on { display: block; }
-  .ok-toast {
-    color: var(--ok);
-    font-size: 13px;
-    display: none;
-  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  a { color:var(--accent); }
+  .wrap { max-width:1000px; margin:0 auto; padding:24px 20px 70px; }
+
+  header { border-bottom:1px solid var(--line); background:var(--panel); }
+  .bar { max-width:1000px; margin:0 auto; padding:16px 20px;
+         display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .brand { font-weight:700; font-size:16px; margin-right:auto; display:flex;
+           align-items:center; gap:9px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--accent); }
+  .who { color:var(--muted); font-size:13px; }
+
+  .card { background:var(--panel); border:1px solid var(--line);
+          border-radius:12px; padding:20px 22px; margin-bottom:18px; }
+  h2 { margin:0 0 4px; font-size:15px; }
+  .sub { margin:0 0 16px; color:var(--muted); font-size:13px; }
+  h3 { margin:0 0 3px; font-size:14px; }
+
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  input, select, textarea { width:100%; padding:10px 12px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:8px; color:var(--text);
+    font:inherit; outline:none; }
+  input:focus, select:focus, textarea:focus { border-color:var(--accent); }
+  textarea { resize:vertical; min-height:70px; }
+  .row { margin-bottom:14px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:640px) { .grid2 { grid-template-columns:1fr; } }
+
+  button { padding:10px 18px; border-radius:8px; border:1px solid transparent;
+           font:inherit; font-weight:600; cursor:pointer; }
+  .primary { background:var(--accent); color:#07131f; }
+  .primary:hover:not(:disabled) { background:#6bb0ff; }
+  .ghost { background:transparent; color:var(--muted); border-color:var(--line); }
+  .ghost:hover { color:var(--text); border-color:var(--muted); }
+  .danger { background:transparent; color:var(--err); border-color:#5a2320; }
+  .danger:hover { background:#2a1618; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .btnrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .hint { font-size:12px; color:var(--muted); }
+
+  .tabs { display:flex; gap:6px; margin-bottom:18px; border-bottom:1px solid var(--line); }
+  .tab { padding:10px 15px; cursor:pointer; color:var(--muted); font-size:14px;
+         border-bottom:2px solid transparent; margin-bottom:-1px; user-select:none; }
+  .tab:hover { color:var(--text); }
+  .tab.on { color:var(--accent); border-bottom-color:var(--accent); font-weight:600; }
+
+  .err { background:#2a1618; border:1px solid #6b2b28; color:#ffb4ae;
+         border-radius:8px; padding:11px 13px; font-size:13px; margin-top:12px;
+         display:none; white-space:pre-wrap; }
+  .ok { color:var(--ok); font-size:13px; }
+
+  /* stat tiles */
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px; }
+  @media (max-width:640px) { .stats { grid-template-columns:repeat(2,1fr); } }
+  .tile { background:var(--panel); border:1px solid var(--line);
+          border-radius:11px; padding:14px 16px; }
+  .tile .n { font-size:22px; font-weight:700; }
+  .tile .l { font-size:12px; color:var(--muted); margin-top:2px; }
+
+  /* submission cards */
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  @media (max-width:860px) { .grid { grid-template-columns:repeat(2,1fr); } }
+  @media (max-width:560px) { .grid { grid-template-columns:1fr; } }
+  .item { background:var(--panel); border:1px solid var(--line);
+          border-radius:11px; overflow:hidden; }
+  .item img { width:100%; height:150px; object-fit:cover; display:block;
+              background:var(--panel2); }
+  .item .body { padding:12px 14px; }
+  .item .fname { font-size:12px; color:var(--muted); word-break:break-all; margin-bottom:7px; }
+  .meta { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:9px; }
+  .chip { font-size:11px; padding:2px 8px; border-radius:999px;
+          border:1px solid var(--line); color:var(--muted); }
+  .chip.submitted { color:var(--accent); border-color:var(--accent-dim); }
+  .chip.approved  { color:var(--ok); border-color:#2c5a38; background:#16301f; }
+  .chip.rejected  { color:var(--err); border-color:#6b2b28; background:#2a1618; }
+  .chip.draft     { color:var(--warn); border-color:#5a4a1a; }
+
+  /* empty state */
+  .empty { text-align:center; padding:46px 20px; }
+  .empty .glyph { font-size:38px; margin-bottom:10px; opacity:.7; }
+  .empty h3 { font-size:16px; margin-bottom:6px; }
+  .empty p { color:var(--muted); font-size:13px; margin:0 auto 18px; max-width:400px; }
+
+  .pager { display:flex; align-items:center; justify-content:center; gap:12px;
+           margin-top:18px; }
+  .pager .info { color:var(--muted); font-size:13px; }
+
+  .drop { border:2px dashed var(--line); border-radius:10px; padding:24px 16px;
+          text-align:center; cursor:pointer; transition:border-color .15s,background .15s; }
+  .drop:hover, .drop.over { border-color:var(--accent); background:#16202b; }
+  .drop .big { font-size:14px; }
+  .drop .small { font-size:12px; color:var(--muted); margin-top:5px; }
+  .vh { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden;
+        clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; border:0; }
+  #preview img { max-width:100%; max-height:220px; border-radius:9px;
+                 border:1px solid var(--line); display:block; margin-bottom:8px; }
+  .hidden { display:none !important; }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Cargo Inspection</h1>
-  <span>Fill in your details, upload the image, get the record back.</span>
+  <div class="bar">
+    <div class="brand"><span class="dot"></span> Cargo Portal</div>
+    <span class="who hidden" id="whoami"></span>
+    <button class="ghost hidden" id="logoutBtn">Sign out</button>
+  </div>
 </header>
 
 <div class="wrap">
 
-  <!-- STEP 1 -->
-  <div class="card">
-    <h2><span class="step">1</span> Your details</h2>
-    <p class="sub">Tell us who is submitting and what kind of cargo the image shows.</p>
+  <!-- ================= SIGN IN ================= -->
+  <div id="authView">
+    <div class="card" style="max-width:420px; margin:40px auto;">
+      <h2 id="authTitle">Sign in</h2>
+      <p class="sub" id="authSub">Access your submissions.</p>
 
-    <div class="row">
-      <label for="name">Name</label>
-      <input type="text" id="name" placeholder="e.g. Abhijeet Kumar" autocomplete="name">
-    </div>
-
-    <div class="grid2">
-      <div class="row">
-        <label for="email">Email</label>
-        <input type="email" id="email" placeholder="you@example.com" autocomplete="email">
+      <div class="row" id="nameRow" style="display:none">
+        <label for="aName">Name</label>
+        <input type="text" id="aName" placeholder="Your name" autocomplete="name">
+      </div>
+      <div class="row" id="phoneRow" style="display:none">
+        <label for="aPhone">Phone (optional)</label>
+        <input type="tel" id="aPhone" placeholder="+91 98765 43210">
       </div>
       <div class="row">
-        <label for="phone">Phone <span class="hint">(optional)</span></label>
-        <input type="tel" id="phone" placeholder="+91 98765 43210">
-      </div>
-    </div>
-
-    <div class="grid2">
-      <div class="row">
-        <label for="cargo">Cargo type</label>
-        <select id="cargo">
-          <option value="">Loading cargo types…</option>
-        </select>
+        <label for="aEmail">Email</label>
+        <input type="email" id="aEmail" placeholder="you@example.com" autocomplete="email">
       </div>
       <div class="row">
-        <label for="inspStatus">Status</label>
-        <select id="inspStatus">
-          <option value="draft">Draft</option>
-          <option value="submitted" selected>Submitted</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
+        <label for="aPass">Password</label>
+        <input type="password" id="aPass" placeholder="••••••••" autocomplete="current-password">
       </div>
-    </div>
 
-    <div class="row">
-      <label for="tags">Tags <span class="hint">(optional, comma separated)</span></label>
-      <input type="text" id="tags" placeholder="urgent, heavy">
-    </div>
+      <div class="err" id="authErr"></div>
 
-    <div class="row">
-      <label for="notes">Notes <span class="hint">(optional)</span></label>
-      <textarea id="notes" placeholder="Anything worth noting about this load…" style="min-height:42px"></textarea>
-    </div>
-
-    <div class="err" id="err1"></div>
-
-    <div class="actions">
-      <button class="primary" id="toImage">Continue to image</button>
-      <span class="hint">Name, email and cargo type are required.</span>
+      <div class="btnrow">
+        <button class="primary" id="authSubmit">Sign in</button>
+        <button class="ghost" id="authToggle">Create an account</button>
+      </div>
+      <p class="hint" style="margin-top:14px" id="authHint">
+        Passwords need 8+ characters with a letter and a number.
+      </p>
     </div>
   </div>
 
-  <!-- STEP 2 -->
-  <div class="card" id="card2" style="display:none">
-    <h2><span class="step">2</span> Upload the image</h2>
-    <p class="sub">
-      Submitting as <strong id="whoLabel"></strong> for
-      <strong id="cargoLabel"></strong><span id="addrLabel"></span>.
-      <button class="ghost" id="back" style="padding:3px 10px;font-size:12px;margin-left:6px">change</button>
-    </p>
+  <!-- ================= PORTAL ================= -->
+  <div id="portalView" class="hidden">
 
-    <div class="drop" id="drop">
-      <div class="big">Click to choose an image, or drop one here</div>
-      <div class="small">PNG, JPEG, WebP or GIF · up to 10 MB</div>
-      <!-- Visually hidden but still focusable/reachable by keyboard and
-           assistive tech, unlike [hidden]. -->
-      <input type="file" id="file" class="visually-hidden"
-             accept="image/png,image/jpeg,image/webp,image/gif" tabindex="-1"
-             aria-label="Choose cargo image">
+    <div class="tabs">
+      <div class="tab on" data-tab="submissions">My submissions</div>
+      <div class="tab" data-tab="upload">Upload</div>
+      <div class="tab hidden" data-tab="admin" id="adminTab">Admin</div>
     </div>
 
-    <div class="preview" id="preview">
-      <img id="prevImg" alt="Selected image preview">
-      <div class="meta" id="prevMeta"></div>
-    </div>
+    <!-- SUBMISSIONS -->
+    <section id="tab-submissions">
+      <div class="stats">
+        <div class="tile"><div class="n" id="sTotal">0</div><div class="l">Submissions</div></div>
+        <div class="tile"><div class="n" id="sApproved">0</div><div class="l">Approved</div></div>
+        <div class="tile"><div class="n" id="sRejected">0</div><div class="l">Rejected</div></div>
+        <div class="tile"><div class="n" id="sWeight">0</div><div class="l">Total kg</div></div>
+      </div>
 
-    <div class="err" id="err2"></div>
+      <div class="card">
+        <h2>Submitted images</h2>
+        <p class="sub" id="subCount">Loading…</p>
 
-    <div class="actions">
-      <button class="primary" id="submit" disabled>Submit inspection</button>
-      <span class="ok-toast" id="busy">Uploading…</span>
-    </div>
-  </div>
+        <div class="grid2" style="margin-bottom:14px">
+          <div class="row" style="margin:0">
+            <label for="fSearch">Search</label>
+            <input type="text" id="fSearch" placeholder="notes, filename…">
+          </div>
+          <div class="row" style="margin:0">
+            <label for="fCargo">Cargo type</label>
+            <select id="fCargo"><option value="">All cargo types</option></select>
+          </div>
+        </div>
 
-  <!-- STEP 3 -->
-  <div class="card rec" id="card3">
-    <h2><span class="step">3</span> Output</h2>
-    <p class="sub">The image was stored and linked to your submission.</p>
-    <div class="badge">✓ STORED</div>
+        <div id="listHost"></div>
+      </div>
+    </section>
 
-    <div class="result-grid">
-      <img id="outImg" alt="Uploaded cargo image">
-      <div>
-        <table id="outTable"></table>
-        <div class="actions">
-          <button class="primary" id="again">Start another</button>
-          <a id="rawLink" target="_blank" style="color:var(--accent);font-size:13px">open raw image</a>
+    <!-- UPLOAD -->
+    <section id="tab-upload" class="hidden">
+      <div class="card" style="max-width:620px">
+        <h2>Upload a submission</h2>
+        <p class="sub">Your name, email and phone are taken from your account.</p>
+
+        <div class="row">
+          <label for="uCargo">Cargo type</label>
+          <select id="uCargo"><option value="">Loading…</option></select>
+        </div>
+        <div class="grid2">
+          <div class="row">
+            <label for="uStatus">Status</label>
+            <select id="uStatus">
+              <option value="draft">Draft</option>
+              <option value="submitted" selected>Submitted</option>
+            </select>
+          </div>
+          <div class="row">
+            <label for="uTags">Tags (optional)</label>
+            <input type="text" id="uTags" placeholder="urgent, heavy">
+          </div>
+        </div>
+        <div class="row">
+          <label for="uNotes">Notes (optional)</label>
+          <textarea id="uNotes" placeholder="Anything worth noting about this load…"></textarea>
+        </div>
+
+        <div class="drop" id="drop">
+          <div class="big">Click to choose an image, or drop one here</div>
+          <div class="small">PNG, JPEG, WebP or GIF · up to 10 MB</div>
+          <input type="file" id="file" class="vh" tabindex="-1"
+                 accept="image/png,image/jpeg,image/webp,image/gif"
+                 aria-label="Choose cargo image">
+        </div>
+
+        <div id="preview" style="margin-top:14px" class="hidden">
+          <img id="prevImg" alt="Selected image preview">
+          <div class="hint" id="prevMeta"></div>
+        </div>
+
+        <div class="err" id="upErr"></div>
+
+        <div class="btnrow" style="margin-top:16px">
+          <button class="primary" id="uploadBtn" disabled>Submit</button>
+          <span class="ok hidden" id="upBusy">Uploading…</span>
         </div>
       </div>
-    </div>
-  </div>
+    </section>
 
+    <!-- ADMIN -->
+    <section id="tab-admin" class="hidden">
+      <div class="stats">
+        <div class="tile"><div class="n" id="aTotal">0</div><div class="l">All submissions</div></div>
+        <div class="tile"><div class="n" id="aPending">0</div><div class="l">Awaiting review</div></div>
+        <div class="tile"><div class="n" id="aApproved">0</div><div class="l">Approved</div></div>
+        <div class="tile"><div class="n" id="aUsers">0</div><div class="l">Users</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Review queue</h2>
+        <p class="sub" id="adminCount">Loading…</p>
+
+        <div class="grid2" style="margin-bottom:14px">
+          <div class="row" style="margin:0">
+            <label for="aSearch">Search</label>
+            <input type="text" id="aSearch" placeholder="name, email, filename…">
+          </div>
+          <div class="row" style="margin:0">
+            <label for="aStatus">Status</label>
+            <select id="aStatus">
+              <option value="">All statuses</option>
+              <option value="submitted">Submitted</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="draft">Draft</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="btnrow hidden" id="bulkBar" style="margin-bottom:14px">
+          <span class="hint"><span id="selCount">0</span> selected</span>
+          <button class="primary" id="bulkApprove" style="padding:6px 13px;font-size:13px">Approve selected</button>
+          <button class="danger" id="bulkReject" style="padding:6px 13px;font-size:13px">Reject selected</button>
+          <button class="ghost" id="selClear" style="padding:6px 13px;font-size:13px">Clear</button>
+        </div>
+
+        <div id="adminHost"></div>
+      </div>
+    </section>
+  </div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
+let me = null, cargoTypes = [], picked = null, page = 0, pageSize = 6;
+let registerMode = false;
 
-// Cargo types come from the database lookup table, not hardcoded here.
-// `slug -> label` is filled in at load time.
-const CARGO = {};
-let picked = null;
+/* ---------------- admin ---------------- */
+let adminPage = 0;
+const selected = new Set();
 
-/* Populate the cargo dropdown from GET /inspections/cargo-types. */
-async function loadCargoTypes() {
-  const sel = $("cargo");
-  try {
-    const res = await fetch("/inspections/cargo-types");
-    const types = await res.json();
-    sel.innerHTML = '<option value="">Select cargo type</option>';
-    types.forEach(t => {
-      CARGO[t.slug] = t.label;
-      const opt = document.createElement("option");
-      opt.value = t.slug;
-      opt.textContent = t.label +
-        (t.density_kg_m3 ? ` (${t.density_kg_m3} kg/m³)` : "");
-      sel.appendChild(opt);
-    });
-  } catch {
-    sel.innerHTML = '<option value="other">Other</option>';
-    CARGO["other"] = "Other";
-  }
+async function refreshAdmin() {
+  const r = await fetch("/admin/stats");
+  if (r.status === 403) { showAuth(); return; }
+  if (!r.ok) return;
+  const d = await r.json();
+  $("aTotal").textContent = d.stats.inspections;
+  $("aApproved").textContent = d.stats.approved;
+  $("aUsers").textContent = d.users;
+
+  const params = new URLSearchParams({ skip: adminPage * 10, limit: 10 });
+  const q = $("aSearch").value.trim();
+  const st = $("aStatus").value;
+  if (q) params.set("search", q);
+  if (st) params.set("status", st);
+
+  const lr = await fetch("/admin/submissions?" + params);
+  if (lr.status === 401) { showAuth(); return; }
+  const list = await lr.json();
+
+  const pending = d.stats.pending;
+  $("aPending").textContent = pending;
+  $("adminCount").textContent = list.total
+    ? `Showing ${adminPage*10+1}–${Math.min((adminPage+1)*10, list.total)} of ${list.total}`
+    : "Nothing to review.";
+
+  $("adminHost").innerHTML = list.total
+    ? `<div class="grid">${list.items.map(adminCard).join("")}</div>${adminPager(list)}`
+    : `<div class="empty"><div class="glyph">&#128203;</div><h3>Nothing here</h3>
+       <p>No submissions match this filter.</p></div>`;
+
+  $("adminHost").querySelectorAll("[data-ok]").forEach(b =>
+    b.addEventListener("click", () => decide(b.dataset.ok, "approve", b.dataset.id)));
+  $("adminHost").querySelectorAll("[data-no]").forEach(b =>
+    b.addEventListener("click", () => decide(b.dataset.no, "reject", b.dataset.id)));
+  $("adminHost").querySelectorAll("[data-chk]").forEach(c =>
+    c.addEventListener("change", () => {
+      const id = Number(c.dataset.chk);
+      c.checked ? selected.add(id) : selected.delete(id);
+      renderBulkBar();
+    }));
+  updateCheckboxes();
 }
 
-function showErr(id, msg) {
+function adminCard(i) {
+  const tags = (i.tags || []).map(t => t.name);
+  const done = i.status === "approved" || i.status === "rejected";
+  return `
+    <div class="item">
+      <img src="${ownerImage(i)}" alt="${escapeHtml(i.image_original_name)}"
+           onerror="this.style.visibility='hidden'">
+      <div class="body">
+        <div class="meta">
+          <span class="chip ${i.status}">${i.status}</span>
+          <span class="chip">${escapeHtml(i.cargo_label || i.cargo_type)}</span>
+          ${tags.map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("")}
+        </div>
+        <div class="hint" style="margin-bottom:9px">
+          <strong>${escapeHtml(i.name || "?")}</strong> · ${escapeHtml(i.email || "")}<br>
+          ${i.image_width}×${i.image_height} px · ${new Date(i.created_at).toLocaleDateString()}
+        </div>
+        ${i.status_note ? `<div class="hint" style="margin-bottom:9px">Note: ${escapeHtml(i.status_note)}</div>` : ""}
+        ${done ? `<div class="hint">Reviewed${i.reviewed_at ? " " + new Date(i.reviewed_at).toLocaleDateString() : ""}</div>`
+               : `<label class="hint" style="display:flex;gap:6px;align-items:center;margin-bottom:9px">
+                    <input type="checkbox" data-chk="${i.id}" style="width:auto"
+                           ${selected.has(i.id) ? "checked" : ""}> select
+                  </label>`}
+        <div class="btnrow">
+          ${done ? "" : `<button class="primary" data-ok="${i.id}" style="padding:5px 11px;font-size:12px">Approve</button>
+          <button class="danger" data-no="${i.id}" style="padding:5px 11px;font-size:12px">Reject</button>`}
+          <a href="${i.image_url}" target="_blank" style="font-size:12px;align-self:center">open</a>
+        </div>
+      </div>
+    </div>`;
+}
+
+function adminPager(d) {
+  const pages = Math.max(1, Math.ceil(d.total / d.limit));
+  if (pages <= 1) return "";
+  return `<div class="pager">
+    <button class="ghost" id="aPrev" ${adminPage === 0 ? "disabled" : ""}>Previous</button>
+    <span class="info">Page ${adminPage+1} of ${pages}</span>
+    <button class="ghost" id="aNext" ${adminPage >= pages-1 ? "disabled" : ""}>Next</button>
+  </div>`;
+}
+
+function updateCheckboxes() {
+  document.querySelectorAll("[data-chk]").forEach(c => {
+    c.checked = selected.has(Number(c.dataset.chk));
+  });
+  renderBulkBar();
+}
+
+function renderBulkBar() {
+  $("selCount").textContent = selected.size;
+  $("bulkBar").classList.toggle("hidden", selected.size === 0);
+}
+
+async function decide(id, action, note) {
+  const r = await fetch(`/admin/submissions/${id}/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(note ? { note } : {}),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    alert(d.detail || "Action failed.");
+    return;
+  }
+  refreshAdmin();
+}
+
+$("bulkApprove").addEventListener("click", async () => {
+  if (!selected.size) return;
+  const r = await fetch("/admin/submissions/bulk", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: [...selected], action: "approve" }),
+  });
+  const d = await r.json();
+  alert(`Approved ${d.results.filter(x => x.ok).length} of ${d.processed}.`);
+  selected.clear();
+  refreshAdmin();
+});
+
+$("bulkReject").addEventListener("click", async () => {
+  if (!selected.size) return;
+  if (!confirm(`Reject ${selected.size} submission(s)?`)) return;
+  const r = await fetch("/admin/submissions/bulk", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: [...selected], action: "reject" }),
+  });
+  const d = await r.json();
+  alert(`Rejected ${d.results.filter(x => x.ok).length} of ${d.processed}.`);
+  selected.clear();
+  refreshAdmin();
+});
+
+$("selClear").addEventListener("click", () => {
+  selected.clear();
+  updateCheckboxes();
+});
+
+let adminTimer;
+$("aSearch").addEventListener("input", () => {
+  clearTimeout(adminTimer);
+  adminTimer = setTimeout(() => { adminPage = 0; refreshAdmin(); }, 300);
+});
+$("aStatus").addEventListener("change", () => { adminPage = 0; refreshAdmin(); });
+
+const adminObserver = new MutationObserver(() => {
+  const p = $("aPrev"), n = $("aNext");
+  if (p && !p.dataset.wired) {
+    p.dataset.wired = "1";
+    p.addEventListener("click", () => { if (adminPage > 0) { adminPage--; refreshAdmin(); } });
+  }
+  if (n && !n.dataset.wired) {
+    n.dataset.wired = "1";
+    n.addEventListener("click", () => { adminPage++; refreshAdmin(); });
+  }
+});
+adminObserver.observe($("adminHost"), { childList: true, subtree: true });
+
+/* ---------------- session ---------------- */
+function errBox(id, msg) {
   const el = $(id);
   if (msg) { el.textContent = msg; el.style.display = "block"; }
   else { el.textContent = ""; el.style.display = "none"; }
 }
 
-/* ---------------- Step 1 ---------------- */
-$("toImage").addEventListener("click", () => {
-  const name = $("name").value.trim();
-  const email = $("email").value.trim();
-  const cargo = $("cargo").value;
-  const phoneRaw = $("phone").value.trim();
+async function boot() {
+  try {
+    const r = await fetch("/auth/me");
+    if (r.ok) {
+      const d = await r.json();
+      me = d.user;
+      // Only render the Admin tab if the server says this account has the role.
+      $("adminTab").classList.toggle("hidden", !d.is_admin);
+      return showPortal();
+    }
+  } catch { /* offline */ }
+  showAuth();
+}
 
-  if (!name)  return showErr("err1", "Name is required.");
-  if (!email) return showErr("err1", "Email is required.");
-  if (!/^\S+@\S+\.\S+$/.test(email)) return showErr("err1", "Enter a valid email address.");
-  if (phoneRaw) {
-    const digits = phoneRaw.replace(/[\s\-()+.]/g, "");
-    if (!/^\d{10,15}$/.test(digits)) return showErr("err1", "Phone must be 10-15 digits.");
+function showAuth() {
+  $("authView").classList.remove("hidden");
+  $("portalView").classList.add("hidden");
+  $("whoami").classList.add("hidden");
+  $("logoutBtn").classList.add("hidden");
+}
+
+function showPortal() {
+  $("authView").classList.add("hidden");
+  $("portalView").classList.remove("hidden");
+  $("whoami").classList.remove("hidden");
+  $("whoami").textContent = `${me.name} · ${me.email}`;
+  $("logoutBtn").classList.remove("hidden");
+  loadCargoTypes();
+  refresh();
+}
+
+/* ---------------- sign in / register ---------------- */
+function setMode(reg) {
+  registerMode = reg;
+  $("nameRow").style.display = reg ? "" : "none";
+  $("phoneRow").style.display = reg ? "" : "none";
+  $("authTitle").textContent = reg ? "Create an account" : "Sign in";
+  $("authSub").textContent = reg
+    ? "Register to submit and track cargo images."
+    : "Access your submissions.";
+  $("authSubmit").textContent = reg ? "Create account" : "Sign in";
+  $("authToggle").textContent = reg ? "I already have an account" : "Create an account";
+  $("aPass").setAttribute("autocomplete", reg ? "new-password" : "current-password");
+  errBox("authErr", "");
+}
+
+$("authToggle").addEventListener("click", () => setMode(!registerMode));
+
+$("authSubmit").addEventListener("click", async () => {
+  const email = $("aEmail").value.trim();
+  const pass = $("aPass").value;
+  if (!email || !pass) return errBox("authErr", "Email and password are required.");
+
+  const payload = registerMode
+    ? { name: $("aName").value.trim(), email, phone: $("aPhone").value.trim() || null, password: pass }
+    : { email, password: pass };
+
+  const url = registerMode ? "/auth/register" : "/auth/login";
+  const btn = $("authSubmit");
+  btn.disabled = true; errBox("authErr", "");
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || "Sign in failed.");
+    me = data.user;
+    $("aPass").value = "";
+    showPortal();
+  } catch (e) {
+    errBox("authErr", e.message);
+  } finally {
+    btn.disabled = false;
   }
-  if (!cargo) return showErr("err1", "Please select a cargo type.");
-
-  showErr("err1", "");
-  $("whoLabel").textContent = name;
-  $("cargoLabel").textContent = CARGO[cargo];
-  $("addrLabel").textContent = phoneRaw ? `, phone ${phoneRaw}` : "";
-  $("card2").style.display = "block";
-  $("card2").scrollIntoView({ behavior: "smooth", block: "nearest" });
 });
 
-$("back").addEventListener("click", () => {
-  $("card2").style.display = "none";
+$("logoutBtn").addEventListener("click", async () => {
+  await fetch("/auth/logout", { method: "POST" });
+  me = null; picked = null;
+  setMode(false);
+  $("aEmail").value = "";
+  showAuth();
 });
 
-/* ---------------- Step 2 ---------------- */
-const drop = $("drop");
-const fileInput = $("file");
+/* ---------------- lookups ---------------- */
+async function loadCargoTypes() {
+  try {
+    const r = await fetch("/portal/cargo-types");
+    cargoTypes = await r.json();
+  } catch { cargoTypes = []; }
 
+  const opts = cargoTypes
+    .map(c => `<option value="${c.slug}">${c.label}${
+      c.density_kg_m3 ? ` (${c.density_kg_m3} kg/m³)` : ""}</option>`).join("");
+  $("uCargo").innerHTML = '<option value="">Select cargo type</option>' + opts;
+  $("fCargo").innerHTML = '<option value="">All cargo types</option>' + opts;
+}
+
+async function refreshStats() {
+  const r = await fetch("/portal/summary");
+  if (!r.ok) return;
+  const d = await r.json();
+  const s = d.stats;
+  $("sTotal").textContent = s.inspections;
+  $("sApproved").textContent = s.approved;
+  $("sRejected").textContent = s.rejected;
+  $("sWeight").textContent = Math.round(s.total_weight_kg).toLocaleString();
+}
+
+/* ---------------- submissions list ---------------- */
+async function refresh() {
+  await refreshStats();
+  const params = new URLSearchParams({ skip: page * pageSize, limit: pageSize });
+  const q = $("fSearch").value.trim();
+  const c = $("fCargo").value;
+  if (q) params.set("search", q);
+  if (c) params.set("cargo_type", c);
+
+  const r = await fetch("/portal/submissions?" + params);
+  if (r.status === 401) { showAuth(); return; }
+  const d = await r.json();
+
+  const from = d.total === 0 ? 0 : page * pageSize + 1;
+  const to = Math.min((page + 1) * pageSize, d.total);
+  $("subCount").textContent = d.total
+    ? `Showing ${from}–${to} of ${d.total}`
+    : "No submissions yet.";
+
+  const host = $("listHost");
+  if (d.total === 0) {
+    host.innerHTML = `
+      <div class="empty">
+        <div class="glyph">&#128230;</div>
+        <h3>${q || c ? "Nothing matches that filter" : "No submissions yet"}</h3>
+        <p>${q || c
+          ? "Try a different search term or clear the filter."
+          : "Upload your first cargo image and it will appear here with its status, cargo type and dimensions."}</p>
+        ${q || c ? "" : '<button class="primary" onclick="switchTab(\'upload\')">Upload your first image</button>'}
+      </div>`;
+    return;
+  }
+
+  host.innerHTML = `<div class="grid">${d.items.map(card).join("")}</div>
+    ${pager(d)}`;
+  host.querySelectorAll("[data-del]").forEach(btn =>
+    btn.addEventListener("click", () => withdraw(btn.dataset.del)));
+}
+
+function card(i) {
+  const tags = (i.tags || []).map(t => t.name);
+  return `
+    <div class="item">
+      <img src="${ownerImage(i)}" alt="${escapeHtml(i.image_original_name)}"
+           onerror="this.style.visibility='hidden'">
+      <div class="body">
+        <div class="fname" title="${escapeHtml(i.image_original_name)}">${escapeHtml(i.image_original_name)}</div>
+        <div class="meta">
+          <span class="chip ${i.status}">${i.status}</span>
+          <span class="chip">${escapeHtml(i.cargo_label || i.cargo_type)}</span>
+          ${tags.map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("")}
+        </div>
+        <div class="hint">
+          ${i.image_width && i.image_height
+            ? `${i.image_width}×${i.image_height} px · ` : ""}${(i.image_size_bytes/1024).toFixed(0)} KB<br>
+          ${new Date(i.created_at).toLocaleDateString()}
+        </div>
+        <div class="btnrow" style="margin-top:10px">
+          <button class="danger" data-del="${i.id}" style="padding:5px 11px;font-size:12px">Withdraw</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function pager(d) {
+  const pages = Math.max(1, Math.ceil(d.total / d.limit));
+  if (pages <= 1) return "";
+  return `
+    <div class="pager">
+      <button class="ghost" id="prevPage" ${page === 0 ? "disabled" : ""}>Previous</button>
+      <span class="info">Page ${page + 1} of ${pages}</span>
+      <button class="ghost" id="nextPage" ${page >= pages - 1 ? "disabled" : ""}>Next</button>
+    </div>`;
+}
+
+/* wire pager buttons after render */
+const observer = new MutationObserver(() => {
+  const p = $("prevPage"), n = $("nextPage");
+  if (p && !p.dataset.wired) {
+    p.dataset.wired = "1";
+    p.addEventListener("click", () => { if (page > 0) { page--; refresh(); } });
+  }
+  if (n && !n.dataset.wired) {
+    n.dataset.wired = "1";
+    n.addEventListener("click", () => { page++; refresh(); });
+  }
+});
+observer.observe($("listHost"), { childList: true, subtree: true });
+
+let searchTimer;
+$("fSearch").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { page = 0; refresh(); }, 300);
+});
+$("fCargo").addEventListener("change", () => { page = 0; refresh(); });
+
+async function withdraw(id) {
+  if (!confirm("Withdraw this submission? It stays in the audit trail.")) return;
+  const r = await fetch(`/portal/submissions/${id}`, { method: "DELETE" });
+  if (!r.ok) {
+    const d = await r.json();
+    alert(d.detail || "Could not withdraw.");
+    return;
+  }
+  refresh();
+}
+
+/* ---------------- tabs ---------------- */
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach(t =>
+    t.classList.toggle("on", t.dataset.tab === name));
+  $("tab-submissions").classList.toggle("hidden", name !== "submissions");
+  $("tab-upload").classList.toggle("hidden", name !== "upload");
+  $("tab-admin").classList.toggle("hidden", name !== "admin");
+  if (name === "admin") refreshAdmin();
+}
+document.querySelectorAll(".tab").forEach(t =>
+  t.addEventListener("click", () => switchTab(t.dataset.tab)));
+
+/* ---------------- upload ---------------- */
+const drop = $("drop"), fileInput = $("file");
 drop.addEventListener("click", () => fileInput.click());
-
-["dragenter", "dragover"].forEach(ev =>
-  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); })
-);
-["dragleave", "drop"].forEach(ev =>
-  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); })
-);
-
+["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove("over"); }));
 drop.addEventListener("drop", e => {
   if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
-
 fileInput.addEventListener("change", () => {
   if (fileInput.files.length) handleFile(fileInput.files[0]);
 });
 
 function handleFile(file) {
-  showErr("err2", "");
-
-  if (!/^image\/(png|jpeg|jpg|webp|gif)$/.test(file.type)) {
-    return showErr("err2", "Unsupported file type. Use PNG, JPEG, WebP or GIF.");
-  }
-  if (file.size > 10 * 1024 * 1024) {
-    return showErr("err2", "File is larger than 10 MB.");
-  }
+  errBox("upErr", "");
+  if (!/^image\/(png|jpeg|jpg|webp|gif)$/.test(file.type))
+    return errBox("upErr", "Unsupported file type. Use PNG, JPEG, WebP or GIF.");
+  if (file.size > 10 * 1024 * 1024)
+    return errBox("upErr", "File is larger than 10 MB.");
 
   picked = file;
-  $("submit").disabled = false;
-
+  $("uploadBtn").disabled = false;
   const url = URL.createObjectURL(file);
   const img = $("prevImg");
   img.src = url;
   img.onload = () => {
     $("prevMeta").textContent =
-      `${file.name} · ${img.naturalWidth}×${img.naturalHeight} px · ` +
-      `${(file.size / 1024).toFixed(1)} KB`;
+      `${file.name} · ${img.naturalWidth}×${img.naturalHeight} px · ${(file.size/1024).toFixed(1)} KB`;
     URL.revokeObjectURL(url);
   };
-  $("preview").style.display = "block";
+  $("preview").classList.remove("hidden");
 }
 
-/* ---------------- Submit ---------------- */
-$("submit").addEventListener("click", async () => {
+$("uploadBtn").addEventListener("click", async () => {
   if (!picked) return;
+  const cargo = $("uCargo").value;
+  if (!cargo) return errBox("upErr", "Please select a cargo type.");
 
   const form = new FormData();
-  form.append("name", $("name").value.trim());
-  form.append("email", $("email").value.trim());
-  form.append("cargo_type", $("cargo").value);
-  const phone = $("phone").value.trim();
-  if (phone) form.append("phone", phone);
-  const notes = $("notes").value.trim();
+  form.append("cargo_type", cargo);
+  form.append("status", $("uStatus").value);
+  const notes = $("uNotes").value.trim();
   if (notes) form.append("notes", notes);
-  const tags = $("tags").value.trim();
+  const tags = $("uTags").value.trim();
   if (tags) form.append("tags", tags);
-  form.append("status", $("inspStatus").value);
   form.append("image", picked);
 
-  // Lets a retry after a timeout return the original row instead of
-  // creating a duplicate.
-  const key = "ui-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+  // Retrying after a timeout returns the original row, not a duplicate.
+  const key = "portal-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
 
-  $("submit").disabled = true;
-  $("busy").style.display = "inline";
-  showErr("err2", "");
+  $("uploadBtn").disabled = true;
+  $("upBusy").classList.remove("hidden");
+  errBox("upErr", "");
 
   try {
-    const res = await fetch("/inspections/", {
-      method: "POST",
-      body: form,
-      headers: { "Idempotency-Key": key }
+    const r = await fetch("/portal/submissions", {
+      method: "POST", body: form, headers: { "Idempotency-Key": key },
     });
-    const payload = await res.json();
-
-    if (!res.ok) {
-      let msg = payload.detail || "Upload failed.";
-      if (Array.isArray(msg)) {
-        msg = msg.map(e => `${(e.loc || []).slice(1).join(".")}: ${e.msg}`).join("\n");
-      }
+    const d = await r.json();
+    if (!r.ok) {
+      let msg = d.detail || "Upload failed.";
+      if (Array.isArray(msg))
+        msg = msg.map(e => `${(e.loc||[]).slice(1).join(".")}: ${e.msg}`).join("\n");
       throw new Error(msg);
     }
-    renderResult(payload);
-  } catch (err) {
-    showErr("err2", err.message);
-    $("submit").disabled = false;
+    // Success: reset the form and show the new card in My submissions.
+    picked = null;
+    $("file").value = "";
+    $("preview").classList.add("hidden");
+    $("uploadBtn").disabled = true;
+    $("uNotes").value = "";
+    $("uTags").value = "";
+    page = 0;
+    switchTab("submissions");
+    refresh();
+  } catch (e) {
+    errBox("upErr", e.message);
+    $("uploadBtn").disabled = false;
   } finally {
-    $("busy").style.display = "none";
+    $("upBusy").classList.add("hidden");
   }
 });
 
-/* ---------------- Step 3 ---------------- */
-function renderResult(r) {
-  $("outImg").src = r.image_url;
-  $("rawLink").href = r.image_url;
-
-  const kb = (r.image_size_bytes / 1024).toFixed(1);
-  const dims = r.image_width && r.image_height
-    ? `${r.image_width} × ${r.image_height} px`
-    : "—";
-
-  const rows = [
-    ["Inspection ID", r.id],
-    ["Status", r.status],
-    ["Linked user ID", r.user_id],
-    ["Name", r.name],
-    ["Email", r.email],
-    ["Phone", r.phone || "— (none)"],
-    ["Cargo type", `${r.cargo_label || r.cargo_type}` +
-      (r.density_kg_m3 ? ` (${r.density_kg_m3} kg/m³)` : "")],
-    ["Tags", (r.tags || []).map(t => t.name).join(", ") || "— (none)"],
-    ["Notes", r.notes || "—"],
-    ["Original filename", r.image_original_name],
-    ["Stored as", r.image_filename],
-    ["Type", r.image_content_type],
-    ["Size", `${kb} KB`],
-    ["Dimensions", dims],
-    ["Image URL", r.image_url],
-    ["Created", new Date(r.created_at).toLocaleString()]
-  ];
-
-  $("outTable").innerHTML = rows
-    .map(([k, v]) => `<tr><td>${k}</td><td>${escapeHtml(String(v))}</td></tr>`)
-    .join("");
-
-  $("card3").classList.add("on");
-  $("card3").scrollIntoView({ behavior: "smooth", block: "start" });
+/* Portal cards read images through the owner-scoped route; the plain
+   /inspections/{id}/image route is admin-only. */
+function ownerImage(i) {
+  return `/portal/submissions/${i.id}/image`;
 }
 
 function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, c =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 }
 
-$("again").addEventListener("click", () => location.reload());
-
-loadCargoTypes();
+boot();
 </script>
-
 </body>
 </html>

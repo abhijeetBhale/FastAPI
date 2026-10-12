@@ -7,7 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
+from database import SessionLocal
 from errors import register_exception_handlers
+from middlewares import install_middlewares
 
 settings = get_settings()
 
@@ -39,22 +41,36 @@ app = FastAPI(
 )
 
 # CORS origins come from config rather than being hardcoded to "*".
+# Added first, so it ends up innermost — it must answer preflight requests
+# before the auth middleware rejects them.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "X-Response-Time-ms"],
 )
 
 register_exception_handlers(app)
 
+# Auth + RBAC + request context. Added last, so these wrap everything above.
+install_middlewares(app, SessionLocal)
+
+from routers.admin import router as admin_router  # noqa: E402
+from routers.auth import router as auth_router  # noqa: E402
 from routers.health import router as health_router  # noqa: E402
+from routers.inspection import portal as portal_router  # noqa: E402
 from routers.inspection import router as inspection_router  # noqa: E402
 from routers.user import router as user_router  # noqa: E402
 
+app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(inspection_router)
+app.include_router(portal_router)
+# Admin last: /admin/submissions/{id} must not be shadowed by the earlier
+# /inspections/{id} pattern, and registering it last keeps that unambiguous.
+app.include_router(admin_router)
 # Registered last so /health keeps its literal path even if a resource router
 # later introduces a `/{id}` route that would otherwise shadow it.
 app.include_router(health_router)

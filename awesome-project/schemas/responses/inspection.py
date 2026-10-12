@@ -44,6 +44,10 @@ class InspectionResponse(BaseModel):
     status_note: Optional[str] = None
     notes: Optional[str] = None
 
+    # Populated only once an admin has decided.
+    reviewed_by: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+
     volume_m3: Optional[float] = None
     estimated_weight_kg: Optional[float] = None
 

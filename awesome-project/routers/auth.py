@@ -1,0 +1,171 @@
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy.orm import Session
+
+from config import get_settings
+from database import get_db
+from models.user import User
+from schemas.requests.auth import LoginRequest, RegisterRequest
+from schemas.responses.auth import (
+    CurrentUserResponse,
+    LoginResponse,
+    MeResponse,
+    MessageResponse,
+)
+from services.auth_service import AuthError, AuthService, PasswordWeak
+from services.rbac import permissions_for
+from services.security import (
+    clear_session_cookie,
+    create_access_token,
+    require_current_user,
+    set_session_cookie,
+)
+
+router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+def _current_payload(user: User, db: Session) -> CurrentUserResponse:
+    svc = AuthService(db)
+    return CurrentUserResponse(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        phone=user.phone,
+        role=user.role,
+        created_at=user.created_at,
+        inspection_count=svc.inspection_count(user.id),
+        has_password=user.password_hash is not None,
+    )
+
+
+@router.post(
+    "/register",
+    response_model=LoginResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create an account and sign in",
+)
+def register(
+    data: RegisterRequest, response: Response, db: Session = Depends(get_db)
+):
+    svc = AuthService(db)
+    try:
+        user = svc.register(data)
+    except PasswordWeak as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Password {' and '.join(e.problems)}.",
+        )
+    except AuthError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    settings = get_settings()
+    token = create_access_token(user)
+    set_session_cookie(response, token, expires_hours=settings.jwt_expires_hours)
+    return LoginResponse(
+        user=_current_payload(user, db),
+        expires_in_hours=settings.jwt_expires_hours,
+    )
+
+
+@router.post("/login", response_model=LoginResponse, summary="Sign in")
+def login(
+    data: LoginRequest, response: Response, db: Session = Depends(get_db)
+):
+    try:
+        user = AuthService(db).authenticate(data.email, data.password)
+    except AuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    settings = get_settings()
+    token = create_access_token(user)
+    set_session_cookie(response, token, expires_hours=settings.jwt_expires_hours)
+    return LoginResponse(
+        user=_current_payload(user, db),
+        expires_in_hours=settings.jwt_expires_hours,
+    )
+
+
+@router.post("/logout", response_model=MessageResponse, summary="Sign out")
+def logout(response: Response):
+    clear_session_cookie(response)
+    return MessageResponse(detail="Signed out")
+
+
+@router.get(
+    "/me",
+    response_model=MeResponse,
+    summary="The signed-in user and their permissions (portal bootstrap)",
+)
+def me(user: User = Depends(require_current_user), db: Session = Depends(get_db)):
+    """Called on page load. A 401 here is how the portal knows to show the
+    sign-in screen rather than the dashboard.
+
+    The permission list drives which controls the UI renders.
+    """
+    return MeResponse(
+        user=_current_payload(user, db),
+        permissions=permissions_for(user),
+        is_admin=user.role == "admin",
+    )
+
+
+@router.post(
+    "/set-password",
+    response_model=MessageResponse,
+    summary="Set a password on an account that has none",
+)
+def set_password(
+    payload: dict,
+    response: Response,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    """Bootstrap for the pre-portal accounts, which have no password yet."""
+    if user.password_hash is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="This account already has a password. Use change-password.",
+        )
+    new_password = payload.get("password")
+    if not new_password:
+        raise HTTPException(status_code=422, detail="password is required")
+
+    try:
+        AuthService(db).set_password(user, new_password)
+    except PasswordWeak as e:
+        raise HTTPException(
+            status_code=422, detail=f"Password {' and '.join(e.problems)}."
+        )
+
+    settings = get_settings()
+    set_session_cookie(
+        response,
+        create_access_token(user),
+        expires_hours=settings.jwt_expires_hours,
+    )
+    return MessageResponse(detail="Password set")
+
+
+@router.post(
+    "/change-password", response_model=MessageResponse, summary="Change your password"
+)
+def change_password(
+    payload: dict,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+):
+    current = payload.get("current_password")
+    new_password = payload.get("new_password")
+    if not current or not new_password:
+        raise HTTPException(
+            status_code=422,
+            detail="current_password and new_password are required",
+        )
+    try:
+        AuthService(db).change_password(user, current, new_password)
+    except AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PasswordWeak as e:
+        raise HTTPException(
+            status_code=422, detail=f"Password {' and '.join(e.problems)}."
+        )
+    return MessageResponse(detail="Password updated")
