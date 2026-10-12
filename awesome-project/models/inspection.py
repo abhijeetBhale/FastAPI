@@ -11,6 +11,7 @@ from sqlalchemy import (
     Index,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from database import Base
 
@@ -52,6 +53,13 @@ class Inspection(Base):
             "ix_inspections_pending_review",
             "created_at",
             postgresql_where=text("status = 'submitted' AND deleted_at IS NULL"),
+        ),
+        # "Which submissions have never been detected" drives the portal's
+        # filter, and would otherwise scan every live row.
+        Index(
+            "ix_inspections_detected_at",
+            "detected_at",
+            postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 
@@ -97,8 +105,28 @@ class Inspection(Base):
     notes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     # ---- measurement (populated by the detection pipeline) ---------------
+    # Left null by the detector on purpose. Its measurement stage returns
+    # *relative* volume from normalised camera intrinsics, and everything
+    # scales off a hardcoded REFERENCE_WIDTH_METERS = 2.0 — so these stay empty
+    # rather than holding dimensionless numbers in metrically-named columns.
     volume_m3: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     estimated_weight_kg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # ---- cargo detection (SAM + YOLO) ------------------------------------
+    # JSONB, not columns: the report shape changes as the pipeline evolves.
+    # Null means "never run", which is distinct from "run, found nothing" —
+    # that case holds a result with `detected: false`.
+    detection_result: Mapped[Optional[dict]] = mapped_column(
+        JSONB, nullable=True
+    )
+    detected_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    # The red-mask overlay the pipeline drew, if any. A refusal produces no
+    # overlay, so this can be null while detection_result is populated.
+    detection_overlay: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )
 
     # ---- stored image metadata (the file itself lives on disk) -----------
     image_filename: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -166,6 +194,30 @@ class Inspection(Base):
     @property
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
+
+    # ---- detection views ---------------------------------------------------
+
+    @property
+    def detection_status(self) -> str:
+        """`not_run` | `detected` | `no_cargo` | `error`.
+
+        Derived rather than stored, so it can never disagree with
+        `detection_result`. Note `not_run` and `no_cargo` are different
+        answers: the first means nobody has tried, the second means the
+        pipeline looked and found nothing.
+        """
+        if self.detection_result is None:
+            return "not_run"
+        if not self.detection_result.get("ok", False):
+            return "error"
+        return "detected" if self.detection_result.get("detected") else "no_cargo"
+
+    @property
+    def cargo_object_count(self) -> int:
+        """Number of cargo regions the pipeline segmented, or 0."""
+        if not self.detection_result:
+            return 0
+        return int(self.detection_result.get("object_count") or 0)
 
     def __repr__(self) -> str:
         return f"<Inspection {self.id} {self.status}>"

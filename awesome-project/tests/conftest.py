@@ -32,6 +32,30 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _isolated_image_storage(tmp_path_factory):
+    """Point the service's image directory at a throwaway folder.
+
+    Every other part of a test is rolled back: the database transaction is, so
+    rows and audit entries vanish. The image *file* is not, because it is
+    written straight to disk. Without this, each run leaves one file per upload
+    behind in the real `storage/inspections/` — which is how that directory
+    reached 1,442 orphaned files with only 2 live rows.
+
+    Redirecting the directory is better than cleaning up afterwards: nothing is
+    created in the first place, so a crashed run cannot leave litter either.
+    """
+    import services.inspection_service as inspection_service
+
+    sandbox = tmp_path_factory.mktemp("inspection-images")
+    previous = inspection_service.STORAGE_DIR
+    inspection_service.STORAGE_DIR = sandbox
+    try:
+        yield sandbox
+    finally:
+        inspection_service.STORAGE_DIR = previous
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _database():
     """Create the test database and apply every migration."""
     admin_url = TEST_URL.rsplit("/", 1)[0] + "/postgres"

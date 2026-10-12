@@ -31,6 +31,7 @@ from schemas.responses.inspection import (
 )
 from schemas.responses.user import UserResponse
 from services.audit_service import AuditService
+from services.detection import overlay_path_for
 from services.inspection_service import InspectionService, resolve_image_path
 from services.rbac import (
     P_AUDIT_READ,
@@ -241,6 +242,75 @@ def bulk_decide(
                 {"id": insp_id, "ok": False, "reason": exc.detail}
             )
     return {"processed": len(results), "results": results}
+
+
+@router.get(
+    "/submissions/{inspection_id}/detection",
+    summary="Read any submission's detection result",
+)
+def admin_submission_detection(
+    inspection_id: int,
+    include_deleted: bool = Query(True),
+    admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
+    db: Session = Depends(get_db),
+):
+    """Admin counterpart of `/portal/submissions/{id}/detection`.
+
+    Read-only on purpose: an admin reviewing a queue should not be able to burn
+    30 s of CPU on someone's submission, and a detection result is not part of
+    the approve/reject decision. Admins re-run detection as the owner would.
+
+    Returns `status: "not_run"` rather than 404 when nothing has been detected
+    yet — the submission exists, it simply has no result, and conflating those
+    would be misleading.
+    """
+    from routers.detection import _to_report
+
+    insp = (
+        db.get(Inspection, inspection_id)
+        if include_deleted
+        else InspectionService(db).get_inspection(inspection_id)
+    )
+    if not insp:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    report = _to_report(insp)
+    # The overlay is served from the portal path, which is owner-scoped, so an
+    # admin is pointed at the admin route instead.
+    if report.overlay_url:
+        report.overlay_url = f"/admin/submissions/{insp.id}/detection/overlay"
+    return report
+
+
+@router.get(
+    "/submissions/{inspection_id}/detection/overlay",
+    summary="Serve any submission's detection overlay",
+)
+def admin_submission_detection_overlay(
+    inspection_id: int,
+    include_deleted: bool = Query(True),
+    admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
+    db: Session = Depends(get_db),
+):
+    """Admin counterpart of the portal's overlay route."""
+    insp = (
+        db.get(Inspection, inspection_id)
+        if include_deleted
+        else InspectionService(db).get_inspection(inspection_id)
+    )
+    if not insp:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    if not insp.detection_overlay:
+        raise HTTPException(
+            status_code=404,
+            detail="No overlay for this submission — nothing was detected.",
+        )
+    try:
+        path = overlay_path_for(insp.detection_overlay)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Overlay not found") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Overlay file is missing")
+    return FileResponse(path, media_type="image/png")
 
 
 @router.get("/submissions/{inspection_id}/image", summary="Serve any image")

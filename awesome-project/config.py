@@ -67,6 +67,30 @@ class Settings(BaseSettings):
     db_pool_timeout: int = 30
     db_pool_recycle: int = 1800
 
+    # ---- cargo detection (SAM + YOLO) ------------------------------------
+    # Off by default. The detector needs a second interpreter holding ~5.5 GB
+    # of torch/ultralytics/open3d, so it cannot be imported here — it runs as a
+    # subprocess. With this false, the /detect endpoints return 503 and nothing
+    # on the upload path changes.
+    detection_enabled: bool = False
+
+    # The detection project's virtualenv interpreter, NOT this app's.
+    detection_python: str = (
+        r"C:\Users\Abhijeet\Desktop\AI-Driven Cargo Detection\.venv\Scripts\python.exe"
+    )
+
+    # Folder holding Revamping.ipynb, models/ and images/.
+    detection_project_dir: str = r"C:\Users\Abhijeet\Desktop\AI-Driven Cargo Detection"
+
+    # SAM + YOLO on CPU runs 16-45 s per image, and the first call in a fresh
+    # process pays model loading on top. 300 s leaves headroom without letting a
+    # hung process pin a request worker indefinitely.
+    detection_timeout: int = 300
+
+    # Guard against two requests writing the same runner output directory. The
+    # notebook's cells are not reentrant.
+    detection_max_concurrency: int = 1
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:

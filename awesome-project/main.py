@@ -59,6 +59,7 @@ install_middlewares(app, SessionLocal)
 
 from routers.admin import router as admin_router  # noqa: E402
 from routers.auth import router as auth_router  # noqa: E402
+from routers.detection import router as detection_router  # noqa: E402
 from routers.health import router as health_router  # noqa: E402
 from routers.inspection import portal as portal_router  # noqa: E402
 from routers.inspection import router as inspection_router  # noqa: E402
@@ -77,6 +78,9 @@ app.include_router(auth_router)
 app.include_router(user_router, dependencies=authed)
 app.include_router(inspection_router, dependencies=authed)
 app.include_router(portal_router, dependencies=authed)
+# Detection is part of the portal surface, so it shares the /portal prefix and
+# its own auth gate.
+app.include_router(detection_router, dependencies=authed)
 # Admin last: /admin/submissions/{id} must not be shadowed by the earlier
 # /inspections/{id} pattern, and registering it last keeps that unambiguous.
 app.include_router(admin_router, dependencies=authed)

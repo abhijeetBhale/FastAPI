@@ -51,6 +51,15 @@ class InspectionResponse(BaseModel):
     volume_m3: Optional[float] = None
     estimated_weight_kg: Optional[float] = None
 
+    # ---- cargo detection --------------------------------------------------
+    # `detection_status` is derived, never stored, so it cannot drift from
+    # `detection_result`. The full report is omitted here — it can hold dozens
+    # of boxes per image and would bloat every list response. Fetch it from
+    # `GET /portal/submissions/{id}/detection`.
+    detection_status: str = "not_run"
+    detected_at: Optional[datetime] = None
+    cargo_object_count: int = 0
+
     image_filename: str
     image_original_name: str
     image_content_type: str

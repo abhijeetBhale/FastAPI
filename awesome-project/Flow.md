@@ -16,16 +16,17 @@ stands at schema revision `0010_roles_and_reviews`.
 6. [Request lifecycle](#6-request-lifecycle)
 7. [Authentication](#7-authentication)
 8. [Authorisation (RBAC)](#8-authorisation-rbac)
-9. [The three API surfaces](#9-the-three-api-surfaces)
+9. [The four API surfaces](#9-the-four-api-surfaces)
 10. [The upload flow, end to end](#10-the-upload-flow-end-to-end)
-11. [The admin review flow](#11-the-admin-review-flow)
-12. [Database schema](#12-database-schema)
-13. [Query patterns](#13-query-patterns)
-14. [Error handling](#14-error-handling)
-15. [The frontend](#15-the-frontend)
-16. [Migration history](#16-migration-history)
-17. [Operational runbook](#17-operational-runbook)
-18. [Where to read next](#18-where-to-read-next)
+11. [The detection flow](#11-the-detection-flow)
+12. [The admin review flow](#12-the-admin-review-flow)
+13. [Database schema](#13-database-schema)
+14. [Query patterns](#14-query-patterns)
+15. [Error handling](#15-error-handling)
+16. [The frontend](#16-the-frontend)
+17. [Migration history](#17-migration-history)
+18. [Operational runbook](#18-operational-runbook)
+19. [Where to read next](#19-where-to-read-next)
 
 ---
 
@@ -86,18 +87,29 @@ awesome-project/
 │   ├── health_service.py
 │   ├── query.py             #   pagination envelope
 │   ├── security.py          #   password hashing, JWT, get_current_user
-│   └── rbac.py              #   roles and permissions
+│   ├── rbac.py              #   roles and permissions
+│   └── detection.py         #   subprocess bridge to the SAM/YOLO pipeline
 │
 ├── routers/                 # HTTP endpoints
 │   ├── auth.py  user.py  health.py
 │   ├── inspection.py        #   cross-user router + portal router
+│   ├── detection.py         #   portal detection router
 │   └── admin.py             #   admin router
 │
 ├── static/index.html        # the whole frontend
-├── alembic/versions/        # 0001 … 0010
-├── scripts/                 # setup_postgres, start_postgres, create_admin
-└── tests/                   # 150 tests
+├── alembic/versions/        # 0001 … 0011
+├── scripts/                 # setup_postgres, start_postgres, create_admin,
+│                            #   detect_runner (runs the notebook cells)
+└── tests/                   # 221 tests
 ```
+
+### The one component outside this tree
+
+The cargo detector is a **31-cell Jupyter notebook** in a separate project, run
+by a separate ~5.5 GB virtualenv (torch, ultralytics, segment-anything,
+transformers, Open3D). Those cannot be merged into this app's environment, so
+`services/detection.py` invokes `scripts/detect_runner.py` as a subprocess and
+the two sides meet at a JSON file. See `DETECTION.md`.
 
 ---
 
@@ -317,6 +329,31 @@ otherwise pass a naive length check.
 The token is **never** in a response body — only in the `Set-Cookie` header. A
 test asserts this.
 
+### Two credentials, one session
+
+The same JWT is accepted two ways:
+
+| Credential | Used by | Why |
+|---|---|---|
+| httpOnly cookie | the portal at `/ui/` | JavaScript cannot read it, so XSS cannot steal it |
+| `Authorization: Bearer <jwt>` | Swagger UI, curl, scripts | Swagger's Authorize dialog **cannot hold a cookie** |
+
+```python
+raw = token                                   # the cookie, checked first
+if not raw and credentials and credentials.scheme.lower() == "bearer":
+    raw = credentials.credentials
+```
+
+Both layers must accept it. `middlewares/auth.py` runs *before routing*, so a
+valid bearer token rejected there would never reach the dependency that would
+have accepted it — `services/detection.py` and the portal router share the same
+`extract_token()` helper for exactly this reason.
+
+Without the `HTTPBearer` scheme declared, `/docs` renders **no Authorize button
+at all** — its dialog only understands apiKey, bearer and OAuth2.
+`tests/test_docs_auth.py` pins all three halves: the scheme exists, protected
+operations declare it, and the token actually authenticates.
+
 ### Enumeration defence
 
 `authenticate()` returns the identical message for an unknown email and a wrong
@@ -430,7 +467,7 @@ is protected by default rather than by remembering to add a check.
 
 ---
 
-## 9. The three API surfaces
+## 9. The four API surfaces
 
 ```mermaid
 flowchart LR
@@ -440,23 +477,33 @@ flowchart LR
     subgraph portal["Portal — own records only"]
         P1["/portal/submissions<br/>/portal/summary<br/>/portal/cargo-types"]
     end
+    subgraph detect["Portal — detection"]
+        D1["/portal/detection/availability<br/>POST …/detect<br/>GET …/detection"]
+    end
     subgraph adminA["Admin"]
         A1["/admin/submissions<br/>/admin/stats<br/>/admin/audit<br/>/admin/users"]
     end
     subgraph adminB["Cross-user (admin)"]
         A2["/inspections/**<br/>GET /users/"]
     end
+    P1 -->|own image| D1
 ```
 
 | Surface | Prefix | Guard |
 |---|---|---|
 | Public | `/`, `/health`, `/auth/*` | none or "signed in" |
 | Portal | `/portal/**` | session + ownership per record |
+| Detection | `/portal/detection/*`, `/portal/…/detect` | session + `submissions:create` + ownership |
 | Admin | `/admin/**` | session + `role == admin` (middleware **and** dependency) |
 | Cross-user | `/inspections/**`, `GET /users/` | `require_permission(read_any)` |
 
 Two admin surfaces exist because they serve different jobs: `/admin/**` is the
 review workflow, `/inspections/**` is the lower-level cross-user API.
+
+Detection sits inside the portal rather than beside it because it acts on the
+caller's **own** submission — same ownership rule, same 404-on-someone-else's-id.
+Admins get a read-only view (`/admin/submissions/{id}/detection`) and cannot
+trigger a run: working a review queue must not cost 30 s of CPU per row.
 
 ---
 
@@ -525,7 +572,70 @@ second row.
 
 ---
 
-## 11. The admin review flow
+## 11. The detection flow
+
+The one request in this app that leaves the process. Full detail in
+`DETECTION.md`; the shape of it:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant R as routers/detection.py
+    participant S as services/detection.py
+    participant P as scripts/detect_runner.py<br/>(detection venv)
+    participant NB as Revamping.ipynb
+    participant PG as PostgreSQL
+
+    B->>R: POST /portal/submissions/7/detect
+    R->>R: ownership → 404 if not yours
+    R->>S: is_available()
+    alt disabled or misconfigured
+        S-->>R: (False, "DETECTION_ENABLED=true in .env")
+        R-->>B: 503
+    end
+    alt already have a result
+        R->>PG: read stored
+        R-->>B: 200 cached, no CPU spent
+    end
+    R->>S: run_detection(image_path)
+    S->>S: semaphore — one run at a time
+    S->>P: subprocess.run(timeout=300s)
+    P->>NB: exec cells 7, 8, 8b, 8c, 9, 10
+    NB-->>P: masks, boxes, scores (on stdout)
+    P->>P: parse verdict + per-object lines
+    P-->>S: result.json + overlay.png
+    S-->>R: DetectionRun
+    R->>PG: detection_result, detected_at, detection_overlay
+    R->>S: cleanup_runs(keep=20)
+    R-->>B: 200 DetectionReport, 16-45 s later
+```
+
+### Four decisions worth understanding
+
+**A refusal is a success.** An image with no cargo returns **200** with
+`detected: false`. "Nothing there" is a correct answer; making the caller read a
+503 as "no cargo" would be a lie in the other direction. A *broken* detector
+returns 502, so the three outcomes never blur.
+
+**The measurement stage is not run.** Notebook cells 12–28 compute depth, point
+cloud and volume. They are excluded, so `volume_m3` and `estimated_weight_kg`
+stay `null` — their output is *relative* volume from normalised camera
+intrinsics, and storing a dimensionless number in a column named `volume_m3`
+would look authoritative forever after.
+
+**The result is the detector's, stored verbatim.** It goes into one JSONB
+column rather than a family of columns, so a pipeline change needs no
+migration. `status` (`not_run` / `detected` / `no_cargo` / `error`) is *derived*
+from it, never stored, so it cannot drift.
+
+**One run at a time.** The notebook's cells share module state and write into
+one project directory; overlapping runs would corrupt each other. The second
+caller gets **503**, not a corrupted first result.
+
+---
+
+## 12. The admin review flow
 
 ```mermaid
 flowchart TD
@@ -563,7 +673,7 @@ small however many decided rows accumulate.
 
 ---
 
-## 12. Database schema
+## 13. Database schema
 
 ```mermaid
 erDiagram
@@ -669,7 +779,7 @@ ix_users_password_hash          WHERE password_hash IS NOT NULL
 
 ---
 
-## 13. Query patterns
+## 14. Query patterns
 
 `tests/test_query_patterns.py` is the place to learn these — each test names the
 pattern it exercises.
@@ -741,7 +851,7 @@ dictionary — never interpolated into SQL. `?sort=id;DROP TABLE users` returns 
 
 ---
 
-## 14. Error handling
+## 15. Error handling
 
 | Situation | Status | Body |
 |---|---|---|
@@ -767,7 +877,7 @@ misleads whoever is debugging it and leaks schema detail. The handler maps it to
 
 ---
 
-## 15. The frontend
+## 16. The frontend
 
 `static/index.html` is one self-contained file — no framework, no build step.
 Served by `StaticFiles` at `/ui/`.
@@ -818,7 +928,7 @@ which switches to the upload tab.
 
 ---
 
-## 16. Migration history
+## 17. Migration history
 
 | # | Revision | What it did |
 |---|---|---|
@@ -849,7 +959,7 @@ alembic check    -> No new upgrade operations detected.
 
 ---
 
-## 17. Operational runbook
+## 18. Operational runbook
 
 ```powershell
 cd C:\Users\Abhijeet\Desktop\FastAPI\awesome-project
@@ -917,7 +1027,7 @@ Drops the database, recreates it, replays all migrations. **Deletes everything.*
 
 ---
 
-## 18. Where to read next
+## 19. Where to read next
 
 | If you want to… | Read |
 |---|---|

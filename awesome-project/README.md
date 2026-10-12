@@ -31,9 +31,20 @@ Database          -> PostgreSQL (via psycopg 3)
 5. [Data model](#data-model)
 6. [API reference](#api-reference)
 7. [Migrations (Alembic)](#migrations-alembic)
-8. [Running the project](#running-the-project)
-9. [Dependency notes](#dependency-notes)
-10. [Roadmap / next steps](#roadmap--next-steps)
+8. [Cargo detection (SAM + YOLO)](#cargo-detection-sam--yolo)
+9. [Running the project](#running-the-project)
+10. [Dependency notes](#dependency-notes)
+11. [Roadmap / next steps](#roadmap--next-steps)
+
+### Companion documents
+
+| Document | Covers |
+|---|---|
+| [`Flow.md`](Flow.md) | How every request moves through the layers, end to end |
+| [`DETECTION.md`](DETECTION.md) | The SAM/YOLO cargo pipeline, and why it is a subprocess |
+| [`POSTGRES.md`](POSTGRES.md) | Database setup on Windows |
+| [`Alembic.md`](Alembic.md) | Migrations, autogenerate internals, batch mode |
+| [`Working.md`](Working.md) | The detection pipeline itself (cells, models, datasets) |
 
 ---
 
@@ -425,6 +436,57 @@ Current revision: `0002_create_inspections` (head).
 - `0002_create_inspections` — `inspections`
 
 See [POSTGRES.md](POSTGRES.md) for the full runbook.
+
+---
+
+## Cargo detection (SAM + YOLO)
+
+A signed-in user can run cargo detection on their own submission:
+
+```powershell
+# is the detector usable?
+Invoke-RestMethod http://127.0.0.1:8000/portal/detection/availability -WebSession $s
+
+# run it — blocks 16-45 s on CPU
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/portal/submissions/16/detect -WebSession $s
+```
+
+The pipeline (SAM ViT-B + a cargo-tuned YOLO-OBB detector) lives in a separate
+project as a Jupyter notebook, in a virtualenv with torch, ultralytics,
+segment-anything, transformers and Open3D — about 5.5 GB. Those cannot be merged
+into this app's environment, so the detector runs as a **subprocess** and the two
+sides meet at a JSON file.
+
+| Endpoint | Who | Purpose |
+|---|---|---|
+| `GET /portal/detection/availability` | user | Whether the detector can run, and why not |
+| `POST /portal/submissions/{id}/detect` | owner | Run detection (cached; `?force=true` to re-run) |
+| `GET /portal/submissions/{id}/detection` | owner | Last stored result |
+| `GET /portal/submissions/{id}/detection/overlay` | owner | Annotated PNG |
+| `GET /admin/submissions/{id}/detection` | admin | Any result, read-only |
+
+**It reports what is visible, not what it weighs.** The pipeline's measurement
+stage returns *relative* volume from normalised camera intrinsics, so
+`volume_m3` and `estimated_weight_kg` stay `null` rather than holding
+dimensionless numbers in metrically-named columns.
+
+Enable it in `.env`:
+
+```ini
+DETECTION_ENABLED=true
+DETECTION_PYTHON=C:\path\to\AI-Driven Cargo Detection\.venv\Scripts\python.exe
+DETECTION_PROJECT_DIR=C:\path\to\AI-Driven Cargo Detection
+```
+
+Then verify the paths without starting the server:
+
+```powershell
+.venv\Scripts\python.exe -m services.detection
+```
+
+Full detail — including how notebook cells are executed, the three outcomes a
+caller must distinguish, and the known false positives — is in
+**[DETECTION.md](DETECTION.md)**.
 
 ---
 
