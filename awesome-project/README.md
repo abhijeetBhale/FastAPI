@@ -1,7 +1,7 @@
 # User-Address API (FastAPI)
 
 A layered REST API for managing users and their addresses, built with FastAPI,
-SQLAlchemy, Pydantic, Alembic, and SQLite.
+SQLAlchemy, Pydantic, Alembic, and PostgreSQL.
 
 The project follows a strict four-layer split so that HTTP concerns, validation,
 business rules, and database access stay separable:
@@ -11,7 +11,7 @@ HTTP Layer        -> routers/
 Validation Layer  -> schemas/
 Business Layer    -> services/
 Data Layer        -> models/ + database.py
-Database          -> SQLite (app.db)
+Database          -> PostgreSQL (via psycopg 3)
 ```
 
 ---
@@ -42,16 +42,19 @@ Database          -> SQLite (app.db)
 ```text
 awesome-project/
 ├── main.py                 # FastAPI app, CORS, router registration, root route
+├── config.py               # Settings; single source of DATABASE_URL
 ├── database.py             # Engine, session factory, Base, get_db dependency
 ├── pyproject.toml          # uv project definition (source of truth)
 ├── requirements.txt        # legacy pip pins (see Dependency notes)
 ├── uv.lock                 # resolved dependency graph
-├── alembic.ini             # Alembic config, DB URL
-├── app.db                  # SQLite database file
+├── alembic.ini             # Alembic config (URL now lives in config.py)
+├── static/index.html       # Upload UI (details -> image -> output)
+├── scripts/                # PostgreSQL setup helpers
 ├── alembic/
-│   ├── env.py              # Autogenerate target metadata from Base + models
+│   ├── env.py              # Uses the app's engine; autogenerate metadata
 │   └── versions/
-│       └── 0001_initial.py # users + addresses tables
+│       ├── 0001_initial.py         # users + addresses tables
+│       └── 0002_create_inspections.py  # inspections table
 ├── models/                 # SQLAlchemy ORM tables
 │   ├── user.py
 │   └── address.py
@@ -92,7 +95,10 @@ Related docs in this repo:
 | ORM | **SQLAlchemy** | 2.1.1 | `DeclarativeBase`, `Mapped`/`mapped_column`, `relationship`, `Session`, query engine |
 | Migrations | **Alembic** | 1.20.0 | Versioned schema changes, `upgrade`/`downgrade` |
 | Templating for migrations | **Mako** | 1.4.3 | Renders revision scripts from `script.py.mako` |
-| Database | **SQLite** | built-in | Single-file `app.db`, local dev only |
+| Database | **PostgreSQL** | 17.11 | System of record. Local service `postgresql-x64-17` |
+| PostgreSQL driver | **psycopg** | 3.3.6 | DBAPI driver + adapter for SQLAlchemy (`postgresql+psycopg`) |
+| Settings | **pydantic-settings** | 2.15.0 | Reads `DATABASE_URL` from env / `.env` |
+| File uploads | **python-multipart** | 0.0.32 | Backs `UploadFile` / `Form` on `/inspections/` |
 | Package/env manager | **uv** | — | Creates `.venv`, resolves `uv.lock`, runs scripts |
 | Language | **Python** | 3.12.10 (env), `>=3.12` required | Type hints drive validation and docs |
 | ASGI reload (dev) | **watchfiles** | 1.3.0 | File watching for `--reload` |
@@ -106,7 +112,7 @@ Uvicorn (ASGI server)
   └── calls
 FastAPI (framework)  ──inherits──>  Starlette (HTTP/routing core)
   ├── Pydantic        (validation, serialization, JSON Schema -> OpenAPI)
-  └── SQLAlchemy      (ORM)  ──>  SQLite
+  └── SQLAlchemy      (ORM)  ──>  PostgreSQL (via psycopg 3)
 Alembic (migrations) ──uses──>   SQLAlchemy + Mako
 ```
 
@@ -126,11 +132,18 @@ app.include_router(user_router)
 app.include_router(address_router)
 ```
 
-### `database.py` — data layer foundation
+### `config.py` + `database.py` — data layer foundation
+
+`config.py` reads `DATABASE_URL` from the environment or `.env`; `database.py`
+builds the engine from it. `alembic/env.py` imports that same engine, so the app
+and the migrations can never point at different databases.
 
 ```python
-engine = create_engine("sqlite:///./app.db",
-                       connect_args={"check_same_thread": False})
+# config.py
+settings = get_settings()          # DATABASE_URL from env / .env
+
+# database.py
+engine = create_engine(settings.database_url, pool_pre_ping=True, pool_size=5, ...)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):
@@ -145,7 +158,8 @@ def get_db():
 ```
 
 `get_db` is a generator dependency. FastAPI opens one session per request and
-guarantees `db.close()` runs after the response is produced.
+guarantees `db.close()` runs after the response is produced. See
+[POSTGRES.md](POSTGRES.md) for the full setup.
 
 ### `models/` — table definitions
 
@@ -194,7 +208,8 @@ flowchart TD
     C --> C1[FastAPI class inherits Starlette]
     C1 --> C2[Pydantic schemas available]
     B --> D[import database]
-    D --> D1[create_engine sqlite app.db]
+    D --> D0[import config -> Settings from env/.env]
+    D0 --> D1[create_engine postgresql+psycopg, pooled]
     D1 --> D2[sessionmaker -> SessionLocal]
     D2 --> D3[DeclarativeBase -> Base]
     B --> E[import routers.user / routers.address]
@@ -228,7 +243,7 @@ flowchart TD
     OK -->|No| E422[422 Unprocessable Entity + error detail]
     OK -->|Yes| FN[Endpoint body: instantiate service with db]
     FN --> SVC[Service method runs business rules]
-    SVC --> ORM[SQLAlchemy emits SQL to SQLite]
+    SVC --> ORM[SQLAlchemy emits SQL over psycopg]
     ORM --> ROW[Row mapped to ORM object]
     ROW --> RESP[response_model filters + serializes ORM object]
     RESP --> CLOSE[get_db finally: db.close]
@@ -247,7 +262,7 @@ sequenceDiagram
     participant D as get_db()
     participant US as UserService
     participant M as User model
-    participant DB as SQLite
+    participant DB as PostgreSQL
 
     C->>R: POST /users/ {"name":"Asha","email":"asha@example.com"}
     R->>S: validate body
@@ -393,53 +408,69 @@ flowchart LR
     B --> C[Alembic diffs model metadata vs DB]
     C --> D[Review the generated script in alembic/versions]
     D --> E["alembic upgrade head"]
-    E --> F[app.db updated]
+    E --> F[PostgreSQL schema updated]
     F --> G[Restart or let --reload pick it up]
 ```
 
-`alembic/env.py` imports `Base` plus both models and assigns
-`target_metadata = Base.metadata`, which is what makes autogenerate aware of every
+`alembic/env.py` imports `Base` plus every model and assigns
+`target_metadata = Base.metadata`, which is what makes autogenerate aware of each
 table. `compare_type=True` catches column type changes as well.
 
-Current revision: `0001_initial` (creates `users` and `addresses`, both indexes, and
-the FK constraint). `alembic.ini` points at `sqlite:///./app.db`, matching
-`database.py`.
+It also imports the **app's engine** from `database.py`, so migrations always
+target the same database as the app. `alembic.ini` carries no `sqlalchemy.url`.
+
+Current revision: `0002_create_inspections` (head).
+
+- `0001_initial` — `users`, `addresses`, indexes, FK constraint
+- `0002_create_inspections` — `inspections`
+
+See [POSTGRES.md](POSTGRES.md) for the full runbook.
 
 ---
 
 ## Running the project
 
-Using uv (recommended, matches `pyproject.toml` / `uv.lock`):
+Full step-by-step runbook: **[POSTGRES.md](POSTGRES.md)**.
 
 ```powershell
+cd C:\Users\Abhijeet\Desktop\FastAPI\awesome-project
+
+# 1. dependencies
 uv sync
-uv run alembic upgrade head      # create/update tables
-uv run uvicorn main:app --reload # dev server with auto-reload on :8000
+
+# 2. connection string (once)
+Copy-Item .env.example .env
+
+# 3. start PostgreSQL
+powershell -ExecutionPolicy Bypass -File scripts\start_postgres.ps1
+
+# 4. create the database + apply migrations (first run only)
+uv run python scripts\setup_postgres.py
+
+# 5. run the API
+uv run uvicorn main:app --reload
 ```
 
-Or via the FastAPI standard CLI:
+Then open:
+
+- UI — <http://127.0.0.1:8000/ui/>
+- Swagger — <http://127.0.0.1:8000/docs>
+
+Start over from an empty database at any time:
 
 ```powershell
-uv run fastapi dev
-```
-
-Using pip and `requirements.txt`:
-
-```powershell
-pip install -r requirements.txt
-alembic upgrade head
-uvicorn main:app --reload
+uv run python scripts\setup_postgres.py --reset --password postgres
 ```
 
 Smoke test:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/
-# {"message":"API is running"}
+# {"message":"API is running","ui":"/ui/"}
 ```
 
-> Note: `database.py` creates the engine but never calls `Base.metadata.create_all()`.
-> If you skip `alembic upgrade head`, queries will fail with "no such table: users".
+> `database.py` builds the engine but never calls `Base.metadata.create_all()`.
+> If you skip the setup script, queries fail with `relation "users" does not exist`.
 
 ---
 
@@ -470,9 +501,11 @@ Ordered roughly by value:
 2. Replace string `ValueError`s with typed custom exceptions and a global handler,
    so routers do not repeat try/except blocks.
 3. Validate pagination bounds (`skip >= 0`, `1 <= limit <= 100` via `Query`).
-4. Move `SQLALCHEMY_DATABASE_URL` and CORS origins into environment-driven settings
-   (`pydantic-settings`), and stop defaulting to `allow_origins=["*"]`.
-5. Add tests: service unit tests against SQLite in-memory, plus router tests with
-   `TestClient` asserting status codes.
-6. Swap SQLite for PostgreSQL (driver change only, plus `alembic` `env.py` review).
+4. Move CORS origins into `config.py` too, and stop defaulting to
+   `allow_origins=["*"]`. (The database URL is already done.)
+5. Add tests: router tests with `TestClient` against a scratch PostgreSQL schema,
+   plus service unit tests.
+6. Stop tracking the compiled `__pycache__/*.pyc` files that are already in git.
 7. Add authentication and authorization before exposing mutating routes publicly.
+8. Serve uploaded images from object storage (S3) rather than the local disk, so
+   the API can run on more than one machine.

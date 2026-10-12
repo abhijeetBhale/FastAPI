@@ -1,0 +1,18 @@
+# Runtime artefacts
+storage/
+
+# Local SQLite leftovers from before the move to PostgreSQL
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# Editors
+.vscode/
+.idea/

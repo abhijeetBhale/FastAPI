@@ -1,10 +1,14 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import pool
 
-from database import Base
+# Importing `database` gives us the app's already-configured engine, so
+# migrations and the app always target the same database. This removes the old
+# duplication where the URL was written in both alembic.ini and database.py.
+from database import Base, engine
 from models.address import Address
+from models.inspection import Inspection
 from models.user import User
 
 config = context.config
@@ -16,9 +20,8 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=str(engine.url),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -30,13 +33,9 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    with connectable.connect() as connection:
+    # NullPool: a migration process connects, runs, and exits. The app's pooled
+    # engine is not needed here.
+    with engine.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
