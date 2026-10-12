@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Cookie, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from config import get_settings
@@ -151,22 +152,45 @@ def clear_session_cookie(response) -> None:
 
 # ---- current-user dependency ------------------------------------------------ #
 
+#: Declared so OpenAPI emits a `bearerAuth` security scheme, which is what gives
+#: Swagger UI its "Authorize" button. Without it /docs offers no way to sign in.
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    description=(
+        "Paste the `session_token` JWT from POST /auth/login's Set-Cookie "
+        "header. The browser portal uses the httpOnly cookie instead and needs "
+        "nothing here."
+    ),
+)
+
+
 def get_current_user(
     token: str | None = Cookie(default=None, alias=COOKIE_NAME),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
     """Resolve the signed-in user, or raise 401.
 
-    Used as a dependency, so every protected route enforces this rather than
-    trusting the caller.
+    Two credentials are accepted, carrying the identical JWT:
+
+    * the httpOnly session cookie — used by the portal,
+    * `Authorization: Bearer <jwt>` — used by Swagger UI, curl and scripts,
+      because Swagger's Authorize button cannot hold a cookie.
+
+    The bearer form is checked second so an existing cookie keeps working
+    unchanged.
     """
-    if not token:
+    raw = token
+    if not raw and credentials and credentials.scheme.lower() == "bearer":
+        raw = credentials.credentials
+
+    if not raw:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not signed in.",
         )
 
-    payload = decode_access_token(token)
+    payload = decode_access_token(raw)
     try:
         user_id = int(payload["sub"])
     except (KeyError, TypeError, ValueError):

@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -63,14 +63,23 @@ from routers.health import router as health_router  # noqa: E402
 from routers.inspection import portal as portal_router  # noqa: E402
 from routers.inspection import router as inspection_router  # noqa: E402
 from routers.user import router as user_router  # noqa: E402
+from services.security import bearer_scheme  # noqa: E402
+
+#: Attached to every authenticated router so OpenAPI marks those operations as
+#: requiring `bearerAuth`. Swagger UI then renders the lock icon and enables its
+#: Authorize dialog — otherwise /docs offers no way to sign in, because its
+#: Authorize button can only hold apiKey/bearer/oauth2 and never a cookie.
+#: `auto_error=False` means this changes the documentation, not the behaviour:
+#: the real 401 still comes from `get_current_user`.
+authed = [Depends(bearer_scheme)]
 
 app.include_router(auth_router)
-app.include_router(user_router)
-app.include_router(inspection_router)
-app.include_router(portal_router)
+app.include_router(user_router, dependencies=authed)
+app.include_router(inspection_router, dependencies=authed)
+app.include_router(portal_router, dependencies=authed)
 # Admin last: /admin/submissions/{id} must not be shadowed by the earlier
 # /inspections/{id} pattern, and registering it last keeps that unambiguous.
-app.include_router(admin_router)
+app.include_router(admin_router, dependencies=authed)
 # Registered last so /health keeps its literal path even if a resource router
 # later introduces a `/{id}` route that would otherwise shadow it.
 app.include_router(health_router)

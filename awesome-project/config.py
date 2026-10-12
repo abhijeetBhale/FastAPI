@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     jwt_expires_hours: int = 12
     # Set true once the app is served over HTTPS, so the cookie is not sent
     # in the clear.
-    cookie_secure: bool = False
+    cookie_secure: bool = True
 
     # Connection pool sizing.
     db_pool_size: int = 5

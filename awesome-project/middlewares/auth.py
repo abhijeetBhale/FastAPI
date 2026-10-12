@@ -21,11 +21,32 @@ from services.security import COOKIE_NAME, decode_access_token
 
 logger = logging.getLogger("app.auth")
 
-#: Prefixes that require a valid session cookie.
+#: Prefixes that require a valid session credential.
 PROTECTED_PREFIXES: tuple[str, ...] = (
     "/portal",
     "/admin",
 )
+
+_BEARER_PREFIX = "bearer "
+
+
+def extract_token(request: Request) -> str | None:
+    """Return the session JWT, from the cookie or an Authorization header.
+
+    The cookie is preferred so the browser portal is unaffected. The bearer
+    fallback exists because Swagger UI's "Authorize" button cannot hold a cookie,
+    and this middleware runs before routing — so without it, a perfectly valid
+    `Authorization: Bearer <jwt>` would be rejected here and never reach the
+    dependency that would have accepted it.
+    """
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
+        return token
+
+    header = request.headers.get("Authorization", "")
+    if header[: len(_BEARER_PREFIX)].lower() == _BEARER_PREFIX:
+        return header[len(_BEARER_PREFIX) :].strip() or None
+    return None
 
 #: Paths inside a protected prefix that stay reachable while signed out, so an
 #: expired session can be refreshed rather than dead-ending.
@@ -54,7 +75,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         if is_protected(path):
-            token = request.cookies.get(COOKIE_NAME)
+            token = extract_token(request)
             if not token:
                 return self._deny(
                     request, 401, "Sign in to continue.", needs_auth=True
