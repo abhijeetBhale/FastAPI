@@ -576,6 +576,32 @@ class TestRunnerContract:
         assert detection.RUNNER_SCRIPT.is_file(), (
             f"missing {detection.RUNNER_SCRIPT}")
 
+    def test_the_vendored_detector_is_present(self):
+        """Option A: the pipeline ships inside this repo, not as a folder
+        reference. If someone deletes detector/ thinking it is generated, the
+        detector silently stops working — this fails first."""
+        root = detection.DETECTOR_DIR
+        assert (root / "Revamping.ipynb").is_file(), (
+            f"missing {root / 'Revamping.ipynb'} — re-vendor per detector/README.md")
+        assert (root / "models" / "cargo_obb_best.pt").is_file(), (
+            f"missing {root / 'models' / 'cargo_obb_best.pt'} — re-vendor per "
+            f"detector/README.md")
+
+    def test_an_empty_project_dir_resolves_to_the_vendored_copy(self, monkeypatch):
+        """The normal case: DETECTION_PROJECT_DIR empty means 'use our own'."""
+        from config import get_settings
+
+        monkeypatch.setattr(get_settings(), "detection_project_dir", "")
+        assert detection.resolve_project_dir() == detection.DETECTOR_DIR
+
+    def test_an_explicit_project_dir_still_wins(self, monkeypatch):
+        """The escape hatch for trying an upstream checkout stays working."""
+        from config import get_settings
+
+        monkeypatch.setattr(get_settings(), "detection_project_dir",
+                            r"C:\somewhere\else")
+        assert str(detection.resolve_project_dir()) == r"C:\somewhere\else"
+
     def test_the_runner_points_at_a_notebook(self, monkeypatch):
         """`CARGO_PROJECT_DIR` is how the runner finds Revamping.ipynb."""
         src = detection.RUNNER_SCRIPT.read_text(encoding="utf-8")

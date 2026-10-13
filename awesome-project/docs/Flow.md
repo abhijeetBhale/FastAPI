@@ -98,6 +98,7 @@ awesome-project/
 │
 ├── static/index.html        # the whole frontend
 ├── alembic/versions/        # 0001 … 0011
+├── detector/                # vendored pipeline: Revamping.ipynb + models/
 ├── scripts/                 # setup_postgres, start_postgres, create_admin,
 │                            #   detect_runner (runs the notebook cells)
 └── tests/                   # 221 tests
@@ -105,11 +106,13 @@ awesome-project/
 
 ### The one component outside this tree
 
-The cargo detector is a **31-cell Jupyter notebook** in a separate project, run
-by a separate ~5.5 GB virtualenv (torch, ultralytics, segment-anything,
-transformers, Open3D). Those cannot be merged into this app's environment, so
-`services/detection.py` invokes `scripts/detect_runner.py` as a subprocess and
-the two sides meet at a JSON file. See `DETECTION.md`.
+Only the **interpreter** lives outside this repo: the cargo pipeline runs under
+a separate ~5.5 GB virtualenv (torch, ultralytics, segment-anything,
+transformers, Open3D) that cannot be merged into this app's environment. The
+pipeline code and weights themselves are vendored in `detector/` (see
+`detector/README.md`), so `services/detection.py` invokes
+`scripts/detect_runner.py` as a subprocess and the two sides meet at a JSON
+file. See `DETECTION.md`.
 
 ---
 

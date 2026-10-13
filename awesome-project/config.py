@@ -79,8 +79,10 @@ class Settings(BaseSettings):
         r"C:\Users\Abhijeet\Desktop\AI-Driven Cargo Detection\.venv\Scripts\python.exe"
     )
 
-    # Folder holding Revamping.ipynb, models/ and images/.
-    detection_project_dir: str = r"C:\Users\Abhijeet\Desktop\AI-Driven Cargo Detection"
+    # Folder holding Revamping.ipynb and models/. Empty means "use the vendored
+    # detector/ directory inside this repo" — the normal case. Set it only to
+    # try an upstream checkout without re-vendoring first.
+    detection_project_dir: str = ""
 
     # SAM + YOLO on CPU runs 16-45 s per image, and the first call in a fresh
     # process pays model loading on top. 300 s leaves headroom without letting a

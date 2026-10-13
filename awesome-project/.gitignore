@@ -1,6 +1,18 @@
 # Runtime artefacts
 storage/
 
+# Vendored detector (see detector/README.md). The 6 MB custom YOLO weights ARE
+# tracked; the 358 MB SAM checkpoint is NOT — Cell 7a downloads it on first run.
+detector/models/sam_vit_b_01ec64.pth
+detector/models/sam3.pt
+# Per-run litter the notebook writes next to itself (the canonical overlay is
+# copied to storage/detection/; these duplicates are deleted after each run,
+# but anything left behind must never be committed).
+detector/cargo_output_visualizations/
+detector/images/
+detector/outputs/
+detector/runs/
+
 # Local SQLite leftovers from before the move to PostgreSQL
 *.db
 *.db-journal

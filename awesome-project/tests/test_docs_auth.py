@@ -52,7 +52,6 @@ class TestOpenAPISpec:
             "/admin/stats",
             "/admin/audit",
             "/admin/users",
-            "/inspections/",
         ],
     )
     def test_protected_operations_declare_security(self, client, path):

@@ -62,8 +62,6 @@ from routers.auth import router as auth_router  # noqa: E402
 from routers.detection import router as detection_router  # noqa: E402
 from routers.health import router as health_router  # noqa: E402
 from routers.inspection import portal as portal_router  # noqa: E402
-from routers.inspection import router as inspection_router  # noqa: E402
-from routers.user import router as user_router  # noqa: E402
 from services.security import bearer_scheme  # noqa: E402
 
 #: Attached to every authenticated router so OpenAPI marks those operations as
@@ -74,16 +72,16 @@ from services.security import bearer_scheme  # noqa: E402
 #: the real 401 still comes from `get_current_user`.
 authed = [Depends(bearer_scheme)]
 
+# Auth is public (login/register) but also has protected endpoints (me, change-password)
 app.include_router(auth_router)
-app.include_router(user_router, dependencies=authed)
-app.include_router(inspection_router, dependencies=authed)
+# Portal: owner-scoped operations for signed-in users
 app.include_router(portal_router, dependencies=authed)
-# Detection is part of the portal surface, so it shares the /portal prefix and
-# its own auth gate.
+# Detection: runs on the caller's own submissions
 app.include_router(detection_router, dependencies=authed)
-# Admin last: /admin/submissions/{id} must not be shadowed by the earlier
-# /inspections/{id} pattern, and registering it last keeps that unambiguous.
+# Admin: review workflow + user management (cross-user, requires admin role)
 app.include_router(admin_router, dependencies=authed)
+# Health checks
+app.include_router(health_router)
 # Registered last so /health keeps its literal path even if a resource router
 # later introduces a `/{id}` route that would otherwise shadow it.
 app.include_router(health_router)

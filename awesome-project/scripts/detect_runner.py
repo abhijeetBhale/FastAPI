@@ -6,9 +6,9 @@ no torch, and the detection venv carries ~5.5 GB of torch/ultralytics/open3d.
 The seam between them is this script — ``services/detection.py`` is the FastAPI
 side that invokes it.
 
-``CARGO_PROJECT_DIR`` points at the detection project, which must contain
-``Revamping.ipynb``. It defaults to this script's own directory, so the runner
-can also be tried by hand from inside the detection repo.
+``CARGO_PROJECT_DIR`` overrides the detector location, which defaults to the
+vendored ``detector/`` directory next to this repo's root. Set it to try an
+upstream notebook without re-vendoring first.
 
 The pipeline lives in that notebook as 31 cells sharing one global namespace —
 ``cell22_volume.py`` calls ``cargo_stage()`` defined ten cells earlier,
@@ -51,10 +51,12 @@ import time
 import traceback
 from pathlib import Path
 
-#: The detection project: holds Revamping.ipynb, models/ and images/.
-PROJECT = Path(
-    os.environ.get("CARGO_PROJECT_DIR") or Path(__file__).resolve().parent
-).resolve()
+#: The vendored detector: holds Revamping.ipynb and models/. Lives inside this
+#: repo so the pipeline is a self-contained dependency, not a folder reference.
+#: `CARGO_PROJECT_DIR` overrides it — useful for trying an upstream notebook
+#: without re-vendoring first.
+DETECTOR_DIR = Path(__file__).resolve().parent.parent / "detector"
+PROJECT = Path(os.environ.get("CARGO_PROJECT_DIR") or DETECTOR_DIR).resolve()
 NOTEBOOK = PROJECT / "Revamping.ipynb"
 
 #: Cells that must run for detection + segmentation. Verified by the e2e sweep
@@ -178,8 +180,10 @@ def load_cells() -> dict[str, str]:
     """Index the notebook's pipeline cells by their ``# CELL nn`` banner."""
     if not NOTEBOOK.is_file():
         raise FileNotFoundError(
-            f"CARGO_PROJECT_DIR does not look like the detection project: no "
-            f"{NOTEBOOK}. Point it at the folder containing Revamping.ipynb."
+            f"No Revamping.ipynb in {PROJECT}. That folder is not a detector "
+            f"project: it must hold the notebook and a models/ directory. "
+            f"Either re-vendor (see detector/README.md) or point "
+            f"CARGO_PROJECT_DIR at the folder containing Revamping.ipynb."
         )
     notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
     cells: dict[str, str] = {}
@@ -297,6 +301,12 @@ def main(argv=None) -> int:
         run_out.mkdir(parents=True, exist_ok=True)
         namespace["OUTPUT_DIR"] = run_out
 
+        # Pin the weights directory explicitly. CELL 7 defaults it to
+        # PROJECT_DIR / "models", which is correct when PROJECT is the vendored
+        # detector/ — but an explicit assignment also keeps working when
+        # CARGO_PROJECT_DIR points somewhere with an unusual layout.
+        namespace["MODEL_DIR"] = PROJECT / "models"
+
         # Stand in for CELL 3's tkinter dialog.
         namespace["image_paths"] = [str(image)]
 
@@ -336,6 +346,15 @@ def main(argv=None) -> int:
         overlay_target = out_dir / "overlay.png"
         if overlay.is_file():
             shutil.copyfile(overlay, overlay_target)
+
+        # CELL 10 also writes a second copy of the overlay next to the project
+        # (`cargo_output_visualizations/`). The canonical copy is already above,
+        # so remove the duplicate — otherwise every run litters the vendored
+        # directory with PNGs that can never be committed (see .gitignore).
+        # Single-image only: the runner asserts exactly one image, so index 1
+        # is the only file this run could have produced.
+        viz_copy = PROJECT / "cargo_output_visualizations" / "cargo_yolo_sam_image_1.png"
+        viz_copy.unlink(missing_ok=True)
 
         result.update({
             "ok": True,

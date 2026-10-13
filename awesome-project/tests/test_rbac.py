@@ -136,32 +136,32 @@ class TestPreviouslyOpenRoutes:
 
     def test_patch_inspection_requires_admin(self, client, users):
         client.cookies.clear()                      # no session at all
-        r = client.patch(f"/inspections/{users['reg']['id']}",
+        r = client.patch(f"/admin/submissions/{users['reg']['id']}",
                          json={"status": "approved"})
         assert r.status_code == 401, "was 200 before RBAC"
 
     def test_regular_user_cannot_patch_status(self, client, users):
         as_user(client)
-        r = client.patch(f"/inspections/{users['reg']['id']}",
+        r = client.patch(f"/admin/submissions/{users['reg']['id']}",
                          json={"status": "approved"})
         assert r.status_code == 403
 
     def test_purge_requires_admin(self, client, users):
         client.cookies.clear()
-        assert client.delete(f"/inspections/{users['reg']['id']}/purge").status_code == 401
+        assert client.delete(f"/admin/submissions/{users['reg']['id']}/purge").status_code == 401
 
     def test_user_list_requires_admin(self, client, users):
         client.cookies.clear()
-        r = client.get("/users/")
+        r = client.get("/admin/users/")
         assert r.status_code == 403 or r.status_code == 401
 
     def test_user_list_blocked_for_regular_user(self, client, users):
         as_user(client)
-        assert client.get("/users/").status_code == 403
+        assert client.get("/admin/users/").status_code == 403
 
     def test_admin_can_patch(self, client, users):
         as_user(client, "boss@example.com")
-        r = client.patch(f"/inspections/{users['reg']['id']}",
+        r = client.patch(f"/admin/submissions/{users['reg']['id']}",
                          json={"status": "approved"})
         assert r.status_code == 200
         assert r.json()["status"] == "approved"
@@ -270,13 +270,13 @@ class TestImageAccess:
     def test_admin_image_route_is_not_user_accessible(self, client, users):
         as_user(client, "reg@example.com")
         assert client.get(
-            f"/inspections/{users['reg']['id']}/image"
+            f"/admin/submissions/{users['reg']['id']}/image"
         ).status_code == 403
 
     def test_anonymous_cannot_fetch_images(self, client, users):
         client.cookies.clear()
         assert client.get(
-            f"/inspections/{users['reg']['id']}/image"
+            f"/admin/submissions/{users['reg']['id']}/image"
         ).status_code == 401
 
 
@@ -319,17 +319,16 @@ class TestUserIsolationStillHolds:
     def test_user_cannot_read_another_user_profile(self, client, users, db):
         boss = db.query(User).filter(User.email == "boss@example.com").one()
         as_user(client, "reg@example.com")
-        assert client.get(f"/users/{boss.id}").status_code == 404
+        assert client.get(f"/admin/users/{boss.id}").status_code == 403
 
     def test_user_can_read_own_profile(self, client, users, db):
-        me = db.query(User).filter(User.email == "reg@example.com").one()
         as_user(client, "reg@example.com")
-        assert client.get(f"/users/{me.id}").status_code == 200
+        assert client.get("/auth/me").status_code == 200
 
     def test_admin_can_read_any_profile(self, client, users, db):
         reg = db.query(User).filter(User.email == "reg@example.com").one()
         as_user(client, "boss@example.com")
-        assert client.get(f"/users/{reg.id}").status_code == 200
+        assert client.get(f"/admin/users/{reg.id}").status_code == 200
 
 
 # ------------------------------------------------------------------ admin tools

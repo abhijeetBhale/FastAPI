@@ -470,12 +470,12 @@ stage returns *relative* volume from normalised camera intrinsics, so
 `volume_m3` and `estimated_weight_kg` stay `null` rather than holding
 dimensionless numbers in metrically-named columns.
 
-Enable it in `.env`:
+Enable it in `.env` (only the interpreter lives outside this repo — the
+pipeline and weights are vendored in `detector/`):
 
 ```ini
 DETECTION_ENABLED=true
 DETECTION_PYTHON=C:\path\to\AI-Driven Cargo Detection\.venv\Scripts\python.exe
-DETECTION_PROJECT_DIR=C:\path\to\AI-Driven Cargo Detection
 ```
 
 Then verify the paths without starting the server:

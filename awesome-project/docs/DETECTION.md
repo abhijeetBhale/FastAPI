@@ -56,14 +56,16 @@ sides meet at a **file**:
 flowchart LR
     A["FastAPI<br/>services/detection.py"] -->|"subprocess.run<br/>timeout=300s"| B["scripts/detect_runner.py<br/>(detection venv)"]
     B --> C["exec notebook cells<br/>7, 8, 8b, 8c, 9, 10"]
-    C --> D["Revamping.ipynb<br/>+ models/"]
+    C --> D["detector/Revamping.ipynb<br/>+ detector/models/"]
     B -->|"result.json + overlay.png"| E["storage/detection/"]
     E --> A
 ```
 
-`scripts/detect_runner.py` lives in **this** repository and is executed **by the
-other project's interpreter**. The integration code is version-controlled
-alongside the API; the models are not duplicated.
+`scripts/detect_runner.py` lives in **this** repository, is executed **by the
+other project's interpreter**, and reads the pipeline from the vendored
+`detector/` directory — also in this repository. Nothing points outside the
+repo except `DETECTION_PYTHON` (the interpreter, which cannot be vendored) and
+the optional `DETECTION_PROJECT_DIR` override. See `detector/README.md`.
 
 ---
 
@@ -71,6 +73,7 @@ alongside the API; the models are not duplicated.
 
 | File | Role |
 |---|---|
+| `detector/` | Vendored pipeline: `Revamping.ipynb` + `models/cargo_obb_best.pt` (see `detector/README.md`) |
 | `scripts/detect_runner.py` | Executes the notebook cells, writes `result.json` + `overlay.png` |
 | `services/detection.py` | The subprocess bridge: availability, timeout, concurrency, parsing |
 | `routers/detection.py` | Portal HTTP surface |
@@ -78,7 +81,7 @@ alongside the API; the models are not duplicated.
 | `schemas/responses/detection.py` | Response shapes |
 | `models/inspection.py` | `detection_result`, `detected_at`, `detection_overlay` |
 | `alembic/versions/0011_detection_results.py` | The three columns |
-| `tests/test_detection.py` | 50 tests |
+| `tests/test_detection.py` | 53 tests |
 
 ---
 
@@ -157,7 +160,8 @@ Everything lives in `.env`, off by default:
 ```ini
 DETECTION_ENABLED = true
 DETECTION_PYTHON = C:\Users\Abhijeet\Desktop\AI-Driven Cargo Detection\.venv\Scripts\python.exe
-DETECTION_PROJECT_DIR = C:\Users\Abhijeet\Desktop\AI-Driven Cargo Detection
+# DETECTION_PROJECT_DIR is intentionally absent: empty means "use the vendored
+# detector/ directory". Set it only to try an upstream checkout.
 DETECTION_TIMEOUT = 300
 DETECTION_MAX_CONCURRENCY = 1
 ```

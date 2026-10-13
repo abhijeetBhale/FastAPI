@@ -53,6 +53,18 @@ RUNNER_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "detect_run
 #: location is obvious in one place.
 WORK_ROOT = Path(__file__).resolve().parent.parent / "storage" / "detection"
 
+#: The vendored detector: Revamping.ipynb plus models/, inside this repo.
+#: Used whenever DETECTION_PROJECT_DIR is empty (the normal case).
+DETECTOR_DIR = Path(__file__).resolve().parent.parent / "detector"
+
+
+def resolve_project_dir() -> Path:
+    """The detector location: the configured override, or the vendored copy."""
+    configured = get_settings().detection_project_dir.strip()
+    if configured:
+        return Path(configured)
+    return DETECTOR_DIR
+
 #: Pipeline stdout is chatty (telemetry tables, warnings, progress remnants).
 #: Capped so a runaway notebook cannot exhaust memory; the tail is kept because
 #: that is where a traceback appears.
@@ -95,11 +107,12 @@ def is_available() -> tuple[bool, str]:
             f"Point DETECTION_PYTHON at the detection project's python.exe."
         )
 
-    notebook = Path(settings.detection_project_dir) / "Revamping.ipynb"
+    notebook = resolve_project_dir() / "Revamping.ipynb"
     if not notebook.is_file():
         return False, (
-            f"Detection notebook not found: {notebook}. Point "
-            f"DETECTION_PROJECT_DIR at the folder containing Revamping.ipynb."
+            f"Detection notebook not found: {notebook}. Either re-vendor "
+            f"(see detector/README.md) or point DETECTION_PROJECT_DIR at the "
+            f"folder containing Revamping.ipynb."
         )
 
     if not RUNNER_SCRIPT.is_file():
@@ -129,7 +142,11 @@ def run_detection(image_path: Path, *, timeout: int | None = None) -> DetectionR
     run_dir.mkdir(parents=True, exist_ok=True)
 
     env = dict(os.environ)
-    env["CARGO_PROJECT_DIR"] = settings.detection_project_dir
+    project_dir = resolve_project_dir()
+    if get_settings().detection_project_dir.strip():
+        # An explicit override; otherwise the runner defaults to the vendored
+        # detector/ on its own and needs no variable at all.
+        env["CARGO_PROJECT_DIR"] = str(project_dir)
     # Silences the telemetry progress bars so the captured output stays readable.
     env.setdefault("CARGO_DEBUG", "0")
     env.setdefault("CARGO_PROGRESS", "0")
@@ -159,7 +176,7 @@ def run_detection(image_path: Path, *, timeout: int | None = None) -> DetectionR
             text=True,
             timeout=limit,
             # The notebook anchors every relative path to its cwd.
-            cwd=settings.detection_project_dir,
+            cwd=project_dir,
         )
         returncode = completed.returncode
         output = (completed.stdout or "") + (completed.stderr or "")

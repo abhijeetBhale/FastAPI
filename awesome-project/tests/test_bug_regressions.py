@@ -11,22 +11,22 @@ class TestPaginationBounds:
     """`limit=-5` used to reach PostgreSQL and surface as a 500."""
 
     def test_negative_limit_is_422(self, admin_client):
-        assert admin_client.get("/inspections/?limit=-5").status_code == 422
+        assert admin_client.get("/admin/submissions?limit=-5").status_code == 422
 
     def test_negative_skip_is_422(self, admin_client):
-        assert admin_client.get("/inspections/?skip=-1").status_code == 422
+        assert admin_client.get("/admin/submissions?skip=-1").status_code == 422
 
     def test_zero_limit_is_422(self, admin_client):
-        assert admin_client.get("/inspections/?limit=0").status_code == 422
+        assert admin_client.get("/admin/submissions?limit=0").status_code == 422
 
     def test_absurd_limit_is_422_not_the_whole_table(self, admin_client):
-        assert admin_client.get("/inspections/?limit=999999").status_code == 422
+        assert admin_client.get("/admin/submissions?limit=999999").status_code == 422
 
     def test_non_numeric_is_422(self, admin_client):
-        assert admin_client.get("/inspections/?skip=abc").status_code == 422
+        assert admin_client.get("/admin/submissions?skip=abc").status_code == 422
 
     def test_valid_bounds_accepted(self, admin_client):
-        assert admin_client.get("/inspections/?skip=0&limit=100").status_code == 200
+        assert admin_client.get("/admin/submissions?skip=0&limit=100").status_code == 200
 
 
 class TestNameLength:
@@ -34,13 +34,17 @@ class TestNameLength:
 
     def test_name_longer_than_column_is_422(self, admin_client):
         r = admin_client.post(
-            "/users/", json={"name": "x" * 80, "email": "long@example.com"}
+            "/auth/register",
+            json={"name": "x" * 80, "email": "long@example.com",
+                  "password": "quay-crane-42"},
         )
         assert r.status_code == 422, r.text
 
     def test_name_at_the_limit_is_accepted(self, admin_client, png_bytes):
         r = admin_client.post(
-            "/users/", json={"name": "y" * 50, "email": "ok50@example.com"}
+            "/auth/register",
+            json={"name": "y" * 50, "email": "ok50@example.com",
+                  "password": "quay-crane-42"},
         )
         assert r.status_code == 201, r.text
 
@@ -50,21 +54,27 @@ class TestCaseInsensitiveEmail:
 
     def test_duplicate_email_different_case_is_rejected(self, admin_client):
         assert admin_client.post(
-            "/users/", json={"name": "A", "email": "Dup@Example.com"}
+            "/auth/register",
+            json={"name": "A", "email": "Dup@Example.com",
+                  "password": "quay-crane-42"},
         ).status_code == 201
 
         # Caught by the service's case-insensitive lookup, so it is a 400 with
         # a clear message. The DB index is the safety net for concurrent writes.
         r = admin_client.post(
-            "/users/", json={"name": "B", "email": "dup@example.com"}
+            "/auth/register",
+            json={"name": "B", "email": "dup@example.com",
+                  "password": "quay-crane-42"},
         )
         assert r.status_code in (400, 409), r.text
 
     def test_lowercase_normalisation_is_visible(self, admin_client):
         r = admin_client.post(
-            "/users/", json={"name": "Norm", "email": "MixedCase@Example.COM"}
+            "/auth/register",
+            json={"name": "Norm", "email": "MixedCase@Example.COM",
+                  "password": "quay-crane-42"},
         )
-        assert r.json()["email"] == "mixedcase@example.com"
+        assert r.json()["user"]["email"] == "mixedcase@example.com"
 
     def test_database_index_blocks_concurrent_duplicates(self, db):
         """The service check has a race; the unique index is the real guard.
@@ -90,12 +100,17 @@ class TestCaseInsensitiveEmail:
 
     def test_inspection_reuses_user_regardless_of_case(self, admin_client, png_bytes):
         first = admin_client.post(
-            "/users/", json={"name": "Case", "email": "Case@Example.com"}
+            "/auth/register",
+            json={"name": "Case", "email": "Case@Example.com",
+                  "password": "quay-crane-42"},
         )
-        uid = first.json()["id"]
+        uid = first.json()["user"]["id"]
+        # Register signs the client in as Case; sign back in as admin.
+        admin_client.post("/auth/login", json={"email": "admin@example.com",
+                                               "password": "quay-crane-42"})
 
         r = admin_client.post(
-            "/inspections/",
+            "/admin/submissions",
             data={"name": "case", "email": "CASE@EXAMPLE.COM",
                   "cargo_type": "scrap-steel"},
             files={"image": ("a.png", png_bytes(), "image/png")},

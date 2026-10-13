@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -66,27 +67,34 @@ class RoleAuthorizationMiddleware(BaseHTTPMiddleware):
 
         db: Session = factory()
         try:
-            user = db.get(User, int(user_id))
-            if user is None or not user.is_active:
+            # Columns only, not the full User object. Materializing the row
+            # would fire the `User.inspections` selectin cascade on every
+            # admin request just to read two columns — pure overhead, since
+            # the route's own dependency loads the user properly right after.
+            row = db.execute(
+                select(User.role, User.is_active).where(
+                    User.id == int(user_id))
+            ).one_or_none()
+            if row is None or not row.is_active:
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Account is no longer active.",
                              "code": "authentication_required"},
                 )
-            if _coerce_role(user.role) != Role.ADMIN:
+            if _coerce_role(row.role) != Role.ADMIN:
                 logger.info(
                     "RBAC deny: user %s (%s) tried %s %s",
-                    user.id, user.role, request.method, path,
+                    user_id, row.role, request.method, path,
                 )
                 return JSONResponse(
                     status_code=403,
                     content={
                         "detail": "Administrator access required.",
                         "code": "insufficient_role",
-                        "your_role": user.role,
+                        "your_role": row.role,
                     },
                 )
-            request.state.role = user.role
+            request.state.role = row.role
         finally:
             db.close()
 

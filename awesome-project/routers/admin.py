@@ -13,10 +13,11 @@ trail says who decided what.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -26,20 +27,27 @@ from models.cargo_type import CargoType
 from models.inspection import INSPECTION_STATUSES, Inspection
 from models.user import User
 from schemas.responses.inspection import (
+    CargoTypeOut,
     InspectionListResponse,
     InspectionResponse,
+    InspectionSummary,
 )
-from schemas.responses.user import UserResponse
+from schemas.requests.inspection import InspectionCreate, InspectionUpdate
+from schemas.responses.user import UserDetailResponse, UserResponse
+from schemas.errors import jsonable_errors
 from services.audit_service import AuditService
 from services.detection import overlay_path_for
+from services.idempotency_service import IdempotencyService
 from services.inspection_service import InspectionService, resolve_image_path
 from services.rbac import (
     P_AUDIT_READ,
+    P_SUBMISSIONS_CREATE,
     P_SUBMISSIONS_READ_ANY,
     P_USERS_MANAGE,
     Role,
     require_permission,
 )
+from services.user_service import UserService
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -91,6 +99,76 @@ def list_all_submissions(
     )
 
 
+@router.post(
+    "/submissions",
+    response_model=InspectionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a submission on behalf of any user (admin only)",
+)
+async def create_submission_admin(
+    name: str = Form(...),
+    email: str = Form(...),
+    cargo_type: str = Form(...),
+    phone: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+    status: str = Form("submitted"),
+    tags: str = Form(""),
+    image: UploadFile = File(...),
+    idempotency_key: Annotated[
+        Optional[str], Header(alias="Idempotency-Key")
+    ] = None,
+    admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
+    db: Session = Depends(get_db),
+):
+    """Create an inspection on behalf of any user.
+
+    Unlike the portal upload (which derives user from the session), the admin
+    supplies the owner's name/email explicitly. The user is created if needed.
+    """
+    idem = IdempotencyService(db)
+    if idempotency_key:
+        replay = idem.lookup(idempotency_key, "POST /admin/submissions/")
+        if replay is not None:
+            return JSONResponse(
+                status_code=replay.status_code, content=replay.response
+            )
+
+    if status not in INSPECTION_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown status '{status}'. Expected one of: {', '.join(INSPECTION_STATUSES)}",
+        )
+
+    try:
+        payload = InspectionCreate(
+            name=name.strip(),
+            email=email.strip(),
+            phone=(phone or "").strip() or None,
+            cargo_type=cargo_type.strip(),
+            notes=(notes or "").strip() or None,
+            status=status,
+            tags=[t for t in tags.split(",") if t.strip()],
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=jsonable_errors(exc))
+
+    content = await image.read()
+    try:
+        insp = InspectionService(db).create_inspection(
+            payload,
+            original_name=image.filename or "",
+            content_type=image.content_type or "",
+            content=content,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    body = InspectionResponse.model_validate(insp).model_dump(mode="json")
+    if idempotency_key:
+        idem.store(idempotency_key, "POST /admin/submissions/", 201, body)
+    return body
+
+
 @router.get(
     "/submissions/pending",
     response_model=InspectionListResponse,
@@ -110,6 +188,35 @@ def pending_submissions(
         [InspectionResponse.model_validate(i) for i in page.items],
         page.total, page.skip, page.limit,
     )
+
+
+# NOTE: every literal `/submissions/<word>` route (pending, summary,
+# orphaned-users) must be registered BEFORE `/{inspection_id}` below. FastAPI
+# matches in registration order, so otherwise "summary" is parsed as an
+# inspection id and returns 422.
+@router.get(
+    "/submissions/summary",
+    response_model=list[InspectionSummary],
+    summary="Per-user aggregates",
+)
+def summary_admin(
+    admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
+    db: Session = Depends(get_db),
+):
+    return InspectionService(db).summary_by_user()
+
+
+@router.get(
+    "/submissions/orphaned-users",
+    summary="Users with no inspections (correlated NOT EXISTS)",
+)
+def orphaned_users_admin(
+    admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
+    db: Session = Depends(get_db),
+):
+    """Users who exist but have never submitted — the onboarding-funnel query."""
+    users = InspectionService(db).users_without_inspections()
+    return [{"id": u.id, "name": u.name, "email": u.email} for u in users]
 
 
 @router.get("/submissions/{inspection_id}", response_model=InspectionResponse)
@@ -244,6 +351,32 @@ def bulk_decide(
     return {"processed": len(results), "results": results}
 
 
+@router.patch(
+    "/submissions/{inspection_id}",
+    response_model=InspectionResponse,
+    summary="Partial update (admin only)",
+)
+def patch_submission(
+    inspection_id: int,
+    data: InspectionUpdate,
+    admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
+    db: Session = Depends(get_db),
+):
+    """Admin partial update: change status, notes, tags, cargo_type, etc.
+
+    The portal restricts users to `SELF_ASSIGNABLE_STATUSES`; admins can set any
+    valid status. Use the approve/reject endpoints for the review workflow
+    (they also record `reviewed_by`/`reviewed_at` and write an audit entry).
+    """
+    try:
+        insp = InspectionService(db).update_inspection(inspection_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not insp:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    return insp
+
+
 @router.get(
     "/submissions/{inspection_id}/detection",
     summary="Read any submission's detection result",
@@ -357,6 +490,23 @@ def restore_submission(
 @router.delete(
     "/submissions/{inspection_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Withdraw (soft-delete) any submission",
+)
+def withdraw_submission_admin(
+    inspection_id: int,
+    admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
+    db: Session = Depends(get_db),
+):
+    """Hide the row without destroying it. Restorable, still listed with
+    `include_deleted=true`, still counted out of aggregates — the same
+    withdraw semantics as the portal, applied cross-user."""
+    if not InspectionService(db).soft_delete(inspection_id):
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+
+@router.delete(
+    "/submissions/{inspection_id}/purge",
+    status_code=status.HTTP_204_NO_CONTENT,
     summary="Permanently delete",
 )
 def purge_submission(
@@ -449,6 +599,21 @@ def read_audit(
 
 
 # --------------------------------------------------------------------- #
+# cargo-types
+# --------------------------------------------------------------------- #
+@router.get(
+    "/cargo-types",
+    response_model=list[CargoTypeOut],
+    summary="Cargo lookup table (admin)",
+)
+def list_cargo_types_admin(
+    admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
+    db: Session = Depends(get_db),
+):
+    """Admin counterpart of `/portal/cargo-types`."""
+    return InspectionService(db).list_cargo_types()
+
+
 # users
 # --------------------------------------------------------------------- #
 @router.get("/users", response_model=list[UserResponse], summary="All users")
@@ -459,6 +624,26 @@ def list_users_admin(
     db: Session = Depends(get_db),
 ):
     return list(db.execute(select(User).order_by(User.id).offset(skip).limit(limit)).scalars())
+
+
+@router.get(
+    "/users/{user_id}",
+    response_model=UserDetailResponse,
+    summary="Read one user (admin only)",
+)
+def get_user_admin(
+    user_id: int,
+    admin: User = Depends(require_permission(P_USERS_MANAGE)),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    svc = UserService(db)
+    return UserDetailResponse(
+        **UserResponse.model_validate(user).model_dump(),
+        inspection_count=svc.get_inspection_count(user_id),
+    )
 
 
 @router.post("/users/{user_id}/role", response_model=UserResponse)
