@@ -54,7 +54,7 @@ def seeded(admin_client, png_bytes):
             files={"image": (f"{name}.png", png_bytes(8, 8), "image/png")},
         )
         assert r.status_code == 201, r.text
-        made.append(r.json())
+        made.append(r.json()["data"])
     return made
 
 
@@ -70,7 +70,7 @@ class TestNoN1Queries:
 
     def _user_queries_for(self, admin_client, queries, limit):
         # Warm the connection so pool setup is not counted.
-        admin_client.get("/admin/submissions?limit=1")
+        admin_client.get("/admin/submissions?per_page=1")
         queries.clear()
         r = admin_client.get(f"/admin/submissions?limit={limit}")
         assert r.status_code == 200
@@ -82,7 +82,7 @@ class TestNoN1Queries:
     ):
         """Serialising user/cargo/tags must not issue a query per row."""
         r, user_queries = self._user_queries_for(admin_client, queries, 100)
-        assert len(r.json()["items"]) == 3
+        assert len(r.json()["data"]) == 3
         # 3 rows -> batched selectins, not 3 lazy loads.
         assert len(user_queries) <= self.MAX_USER_QUERIES, (
             f"expected batched eager loading, got {len(user_queries)} "
@@ -103,24 +103,24 @@ class TestFiltering:
     def test_filter_by_cargo_type(self, admin_client, seeded):
         r = admin_client.get("/admin/submissions?cargo_type=scrap-steel")
         assert r.status_code == 200
-        assert r.json()["total"] == 2
+        assert r.json()["meta"]["pagination"]["total"] == 2
 
     def test_filter_by_status(self, admin_client, seeded):
-        assert admin_client.get("/admin/submissions?status=submitted").json()["total"] == 3
-        assert admin_client.get("/admin/submissions?status=approved").json()["total"] == 0
+        assert admin_client.get("/admin/submissions?status=submitted").json()["meta"]["pagination"]["total"] == 3
+        assert admin_client.get("/admin/submissions?status=approved").json()["meta"]["pagination"]["total"] == 0
 
     def test_filter_by_tag(self, admin_client, seeded):
         r = admin_client.get("/admin/submissions?tag=urgent")
-        assert r.json()["total"] == 2
+        assert r.json()["meta"]["pagination"]["total"] == 2
 
     def test_search_matches_notes_name_and_filename(self, admin_client, seeded):
-        assert admin_client.get("/admin/submissions?search=Beta").json()["total"] == 1
-        assert admin_client.get("/admin/submissions?search=Alpha").json()["total"] == 1
-        assert admin_client.get("/admin/submissions?search=alpha@example").json()["total"] == 1
+        assert admin_client.get("/admin/submissions?search=Beta").json()["meta"]["pagination"]["total"] == 1
+        assert admin_client.get("/admin/submissions?search=Alpha").json()["meta"]["pagination"]["total"] == 1
+        assert admin_client.get("/admin/submissions?search=alpha@example").json()["meta"]["pagination"]["total"] == 1
 
     def test_combined_filters_are_anded(self, admin_client, seeded):
         r = admin_client.get("/admin/submissions?cargo_type=scrap-steel&tag=heavy")
-        assert r.json()["total"] == 1
+        assert r.json()["meta"]["pagination"]["total"] == 1
 
     def test_unknown_status_is_422(self, admin_client, seeded):
         assert admin_client.get("/admin/submissions?status=bogus").status_code == 422
@@ -137,16 +137,16 @@ class TestFiltering:
 
 class TestPagination:
     def test_envelope_reports_totals(self, admin_client, seeded):
-        r = admin_client.get("/admin/submissions?limit=2").json()
-        assert r["total"] == 3
-        assert len(r["items"]) == 2
-        assert r["pages"] == 2
+        r = admin_client.get("/admin/submissions?per_page=2").json()
+        assert r["meta"]["pagination"]["total"] == 3
+        assert len(r["data"]) == 2
+        assert r["meta"]["pagination"]["total_pages"] == 2
 
     def test_pages_do_not_overlap(self, admin_client, seeded):
-        first = admin_client.get("/admin/submissions?skip=0&limit=2&sort=id").json()
-        second = admin_client.get("/admin/submissions?skip=2&limit=2&sort=id").json()
-        ids_a = {i["id"] for i in first["items"]}
-        ids_b = {i["id"] for i in second["items"]}
+        first = admin_client.get("/admin/submissions?page=1&per_page=2&sort=id").json()
+        second = admin_client.get("/admin/submissions?page=2&per_page=2&sort=id").json()
+        ids_a = {i["id"] for i in first["data"]}
+        ids_b = {i["id"] for i in second["data"]}
         assert ids_a and ids_b
         assert not (ids_a & ids_b)
 
@@ -157,12 +157,12 @@ class TestSoftDelete:
         assert admin_client.delete(f"/admin/submissions/{victim}").status_code == 204
 
         assert admin_client.get(f"/admin/submissions/{victim}").status_code == 404
-        assert admin_client.get("/admin/submissions").json()["total"] == 2
+        assert admin_client.get("/admin/submissions").json()["meta"]["pagination"]["total"] == 2
 
     def test_deleted_rows_can_be_listed_explicitly(self, admin_client, seeded):
         admin_client.delete(f"/admin/submissions/{seeded[0]['id']}")
         r = admin_client.get("/admin/submissions?include_deleted=true")
-        assert r.json()["total"] == 3
+        assert r.json()["meta"]["pagination"]["total"] == 3
 
     def test_restore_brings_the_row_back(self, admin_client, seeded):
         victim = seeded[0]["id"]
@@ -183,14 +183,14 @@ class TestAggregates:
     def test_per_user_summary(self, admin_client, seeded):
         r = admin_client.get("/admin/submissions/summary")
         assert r.status_code == 200
-        rows = {row["email"]: row for row in r.json()}
+        rows = {row["email"]: row for row in r.json()["data"]}
         alpha = rows["alpha@example.com"]
         assert alpha["inspection_count"] == 1
         assert alpha["approved_count"] == 0
         assert alpha["last_inspection_at"] is not None
 
     def test_summary_is_ordered_by_volume(self, admin_client, seeded):
-        rows = admin_client.get("/admin/submissions/summary").json()
+        rows = admin_client.get("/admin/submissions/summary").json()["data"]
         counts = [r["inspection_count"] for r in rows]
         assert counts == sorted(counts, reverse=True)
 
@@ -203,19 +203,19 @@ class TestAggregates:
         # Register signs the client in as Nobody; sign back in as admin.
         admin_client.post("/auth/login", json={"email": "admin@example.com",
                                                "password": "quay-crane-42"})
-        rows = {r["email"]: r for r in admin_client.get("/admin/submissions/summary").json()}
+        rows = {r["email"]: r for r in admin_client.get("/admin/submissions/summary").json()["data"]}
         # outerjoin, not innerjoin: zero-inspection users must still appear.
         assert rows["nobody@example.com"]["inspection_count"] == 0
         assert rows["nobody@example.com"]["total_weight_kg"] == 0.0
 
     def test_stats_headline_numbers(self, admin_client, seeded):
-        r = admin_client.get("/admin/stats").json()
+        r = admin_client.get("/admin/stats").json()["data"]
         assert r["stats"]["inspections"] == 3
         assert r["stats"]["approved"] == 0
 
     def test_summary_excludes_soft_deleted(self, admin_client, seeded):
         admin_client.delete(f"/admin/submissions/{seeded[0]['id']}")
-        r = admin_client.get("/admin/submissions/summary").json()
+        r = admin_client.get("/admin/submissions/summary").json()["data"]
         alpha = [x for x in r if x["email"] == "alpha@example.com"][0]
         assert alpha["inspection_count"] == 0
 
@@ -231,7 +231,7 @@ class TestAggregates:
                                                "password": "quay-crane-42"})
         r = admin_client.get("/admin/submissions/orphaned-users")
         assert r.status_code == 200
-        emails = {u["email"] for u in r.json()}
+        emails = {u["email"] for u in r.json()["data"]}
         assert "idle@example.com" in emails
         assert "alpha@example.com" not in emails
 
@@ -243,7 +243,7 @@ class TestStatusWorkflow:
             json={"status": "approved", "status_note": "looks fine"},
         )
         assert r.status_code == 200
-        assert r.json()["status"] == "approved"
+        assert r.json()["data"]["status"] == "approved"
 
     def test_invalid_status_is_rejected(self, admin_client, seeded):
         r = admin_client.patch(f"/admin/submissions/{seeded[0]['id']}", json={"status": "nope"})
@@ -256,7 +256,7 @@ class TestStatusWorkflow:
                   "cargo_type": "other", "status": "draft"},
             files={"image": ("a.png", png_bytes(), "image/png")},
         )
-        assert r.json()["status"] == "draft"
+        assert r.json()["data"]["status"] == "draft"
 
 
 class TestIdempotency:
@@ -282,8 +282,8 @@ class TestIdempotency:
             headers={"Idempotency-Key": "key-abc-123"},
         )
         assert second.status_code == 201
-        assert second.json()["id"] == first.json()["id"]
-        assert admin_client.get("/admin/submissions").json()["total"] == 1
+        assert second.json()["data"]["id"] == first.json()["data"]["id"]
+        assert admin_client.get("/admin/submissions").json()["meta"]["pagination"]["total"] == 1
 
     def test_different_keys_create_different_rows(self, admin_client, png_bytes):
         payload = {"name": "K", "email": "k@example.com", "cargo_type": "other"}
@@ -292,7 +292,7 @@ class TestIdempotency:
                         headers={"Idempotency-Key": "k1"})
         b = admin_client.post("/admin/submissions", data=payload, files=files,
                         headers={"Idempotency-Key": "k2"})
-        assert a.json()["id"] != b.json()["id"]
+        assert a.json()["data"]["id"] != b.json()["data"]["id"]
 
 
 class TestAuditTrail:
@@ -327,12 +327,12 @@ class TestCargoTypeLookup:
     def test_lookup_table_is_seeded(self, admin_client):
         r = admin_client.get("/admin/cargo-types")
         assert r.status_code == 200
-        slugs = {c["slug"] for c in r.json()}
+        slugs = {c["slug"] for c in r.json()["data"]}
         assert {"scrap-steel", "thermal-coal", "construction-gravel",
                 "agricultural-grain", "other"} <= slugs
 
     def test_densities_are_exposed(self, admin_client):
-        types = {c["slug"]: c for c in admin_client.get("/admin/cargo-types").json()}
+        types = {c["slug"]: c for c in admin_client.get("/admin/cargo-types").json()["data"]}
         assert types["scrap-steel"]["density_kg_m3"] == 7850.0
         assert types["thermal-coal"]["density_kg_m3"] == 800.0
 
@@ -344,7 +344,7 @@ class TestCargoTypeLookup:
             files={"image": ("a.png", png_bytes(), "image/png")},
         )
         assert r.status_code == 201
-        assert r.json()["cargo_type"] == "other"
+        assert r.json()["data"]["cargo_type"] == "other"
 
     def test_response_includes_label_and_density(self, admin_client, png_bytes):
         r = admin_client.post(
@@ -352,14 +352,14 @@ class TestCargoTypeLookup:
             data={"name": "Y", "email": "y@label.com",
                   "cargo_type": "thermal-coal"},
             files={"image": ("a.png", png_bytes(), "image/png")},
-        ).json()
+        ).json()["data"]
         assert r["cargo_label"] == "Thermal Coal"
         assert r["density_kg_m3"] == 800.0
 
 
 class TestTags:
     def test_tags_round_trip(self, admin_client, seeded):
-        r = admin_client.get(f"/admin/submissions/{seeded[0]['id']}").json()
+        r = admin_client.get(f"/admin/submissions/{seeded[0]['id']}").json()["data"]
         assert {t["name"] for t in r["tags"]} == {"urgent", "heavy"}
 
     def test_tags_are_reused_not_duplicated(self, admin_client, seeded, db):
@@ -372,4 +372,4 @@ class TestTags:
         r = admin_client.patch(
             f"/admin/submissions/{seeded[0]['id']}", json={"tags": ["recheck"]}
         )
-        assert {t["name"] for t in r.json()["tags"]} == {"recheck"}
+        assert {t["name"] for t in r.json()["data"]["tags"]} == {"recheck"}

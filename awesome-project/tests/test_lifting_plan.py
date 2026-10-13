@@ -18,7 +18,7 @@ def submission(client, png_bytes, db):
     r = client.post("/portal/submissions", data={"cargo_type": "scrap-steel"},
                     files={"image": ("c.png", png_bytes(), "image/png")})
     assert r.status_code == 201, r.text
-    insp = r.json()
+    insp = r.json()["data"]
 
     from models.inspection import Inspection
 
@@ -178,7 +178,7 @@ class TestCalibration:
         r = client.post("/portal/submissions",
                         data={"cargo_type": "other"},
                         files={"image": ("c.png", png_bytes(), "image/png")})
-        insp = r.json()
+        insp = r.json()["data"]
 
         from models.inspection import Inspection
 
@@ -280,7 +280,7 @@ class TestRigging:
         r = client.post("/portal/submissions",
                         data={"cargo_type": "scrap-steel"},
                         files={"image": ("c.png", png_bytes(), "image/png")})
-        insp = r.json()
+        insp = r.json()["data"]
 
         from models.inspection import Inspection
 

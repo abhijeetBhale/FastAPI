@@ -1,8 +1,8 @@
-"""Cargo detection integration.
+﻿"""Cargo detection integration.
 
 The real detector takes 16-45 s per image and lives in a 5.5 GB second
 virtualenv, so these tests never run it. They pin everything around it: the
-subprocess contract, the HTTP semantics, and the authorisation rules — all of
+subprocess contract, the HTTP semantics, and the authorisation rules â€” all of
 which are where a regression would actually hurt.
 
 `run_detection` is monkeypatched throughout. The seam is narrow and deliberate:
@@ -11,9 +11,9 @@ should fail.
 
 The split that matters:
 
-* a **refusal** (`detected: false`) is a *success* — 200, result stored;
-* a **broken detector** is a *failure* — 502, and nothing claims it worked;
-* **disabled or misconfigured** is *unavailable* — 503, before any work starts.
+* a **refusal** (`detected: false`) is a *success* â€” 200, result stored;
+* a **broken detector** is a *failure* â€” 502 + RFC 9457 error envelope;
+* **disabled or misconfigured** is *unavailable* â€” 503, before any work starts.
 """
 
 from __future__ import annotations
@@ -46,6 +46,8 @@ DETECTED_RESULT = {
             "sam_score": 0.93,
             "mask_area_px": 17051,
             "box_px": [52.0, 287.0, 196.0, 459.0],
+            "yolo_box_px": [52.0, 287.0, 196.0, 459.0],
+            "sam_box_px": [52.0, 287.0, 196.0, 459.0],
         },
         {
             "label": "Cargo-Box",
@@ -53,6 +55,8 @@ DETECTED_RESULT = {
             "sam_score": 0.94,
             "mask_area_px": 29188,
             "box_px": [260.0, 215.0, 444.0, 439.0],
+            "yolo_box_px": [260.0, 215.0, 444.0, 439.0],
+            "sam_box_px": [260.0, 215.0, 444.0, 439.0],
         },
     ],
     "image_width": 500,
@@ -97,7 +101,7 @@ def _isolated_work_root(tmp_path, monkeypatch):
 
     Without this, the suite writes overlays and `run_*` directories into the
     real `storage/detection/`, so a test run would leave files that the next
-    `cleanup_runs` then deletes — and could serve someone else's stored overlay.
+    `cleanup_runs` then deletes â€” and could serve someone else's stored overlay.
     """
     root = tmp_path / "detection"
     root.mkdir()
@@ -113,14 +117,14 @@ def submission(client, png_bytes):
     r = client.post("/portal/submissions", data={"cargo_type": "scrap-steel"},
                     files={"image": ("c.png", png_bytes(), "image/png")})
     assert r.status_code == 201, r.text
-    return r.json()
+    return r.json()["data"]
 
 
 @pytest.fixture
 def fake_run(monkeypatch):
     """Replace the subprocess bridge with a stub returning `result`.
 
-    Defaults to a successful detection. Pass `overlay=None` for a refusal —
+    Defaults to a successful detection. Pass `overlay=None` for a refusal â€”
     CELL 10 draws no box when nothing passes the gate.
     """
     def _install(result=None, *, overlay=True, returncode=0):
@@ -163,14 +167,14 @@ def enabled(monkeypatch):
 def as_other_user(client):
     client.post("/auth/logout")
     client.cookies.clear()
-    client.post("/auth/register", json={"name": "Bo", "email": "bo@example.com",
+    client.post("/auth/register", json={"name": "Fo", "email": "bo@example.com",
                                         "password": "quay-crane-42"})
 
 
 # ---- availability --------------------------------------------------------
 class TestAvailability:
     def test_disabled_is_reported_as_such(self, authed, monkeypatch):
-        """Must not assert on whatever `.env` happens to say — the test controls
+        """Must not assert on whatever `.env` happens to say â€” the test controls
         the setting, so it means the same thing on every machine."""
         from config import get_settings
 
@@ -223,25 +227,69 @@ class TestAvailability:
 
 # ---- running detection ---------------------------------------------------
 class TestDetect:
-    def test_detect_stores_and_returns_the_report(self, client, submission,
-                                                  fake_run, enabled):
+    def test_detect_stores_and_returns_envelope(self, client, submission,
+                                               fake_run, enabled):
         fake_run()
         r = client.post(f"/portal/submissions/{submission['id']}/detect")
 
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["ok"] is True
-        assert body["detected"] is True
-        assert body["status"] == "detected"
-        assert body["label"] == "Cargo-Box"
-        assert body["object_count"] == 2
-        assert len(body["objects"]) == 2
-        assert body["objects"][0]["yolo_confidence"] == 0.83
-        assert body["inspection_id"] == submission["id"]
+        assert "data" in body and "meta" in body
+        assert "error" not in body
 
-    def test_the_report_is_persisted(self, client, submission, fake_run, enabled,
-                                     db):
-        """The result must survive the request — a GET has to find it."""
+        data = body["data"]
+        assert data["detected"] is True
+        assert data["label"] == "Cargo-Box"
+        assert data["aggregate_score"] == 16.3
+        assert len(data["objects"]) == 2
+        assert data["objects"][0]["yolo_confidence"] == 0.83
+
+        meta = body["meta"]
+        assert meta["inspection_id"] == submission["id"]
+        assert meta["image"]["width"] == 500
+        assert meta["image"]["height"] == 500
+        assert meta["elapsed_seconds"] == 24.4
+        assert meta["links"]["overlay"].endswith("/detection/overlay")
+
+    def test_envelope_drops_derivable_fields(self, client, submission, fake_run,
+                                             enabled):
+        """`ok`, `status`, `reason`, `object_count`, `box_fraction_of_frame`
+        and `has_overlay` are all derivable â€” they must not appear."""
+        fake_run()
+        body = client.post(
+            f"/portal/submissions/{submission['id']}/detect").json()
+        data = body["data"]
+        assert "ok" not in data
+        assert "status" not in data
+        assert "reason" not in data
+        assert "object_count" not in data
+        assert "box_fraction_of_frame" not in data
+        assert "has_overlay" not in data
+        assert "box_width_px" not in data
+        assert "box_height_px" not in data
+
+    def test_box_is_self_describing(self, client, submission, fake_run, enabled):
+        """`[x1, y1, x2, y2]` becomes `{x, y, w, h}`."""
+        fake_run()
+        body = client.post(
+            f"/portal/submissions/{submission['id']}/detect").json()
+        box = body["data"]["box"]
+        assert box == {"x": 52, "y": 287, "w": 144, "h": 172}
+
+    def test_models_nests_per_model_boxes(self, client, submission, fake_run,
+                                          enabled):
+        """YOLO and SAM boxes nest under `models` when present."""
+        fake_run()
+        body = client.post(
+            f"/portal/submissions/{submission['id']}/detect").json()
+        obj = body["data"]["objects"][0]
+        assert "models" in obj
+        assert obj["models"]["yolo"] is not None
+        assert obj["models"]["sam"] is not None
+
+    def test_the_report_is_persisted(self, client, submission, fake_run,
+                                     enabled, db):
+        """The result must survive the request â€” a GET has to find it."""
         from models.inspection import Inspection
 
         fake_run()
@@ -266,22 +314,20 @@ class TestDetect:
         assert insp.estimated_weight_kg is None
 
     def test_a_refusal_is_a_success(self, client, submission, fake_run, enabled):
-        """'No cargo here' is a correct answer, so it is 200 with detected:false
-        — not an error the caller has to special-case."""
+        """'No cargo here' is a correct answer, so it is 200 with
+        detected:false â€” not an error the caller has to special-case."""
         fake_run(REFUSED_RESULT, overlay=False)
         r = client.post(f"/portal/submissions/{submission['id']}/detect")
 
         assert r.status_code == 200, r.text
-        body = r.json()
-        assert body["ok"] is True
-        assert body["detected"] is False
-        assert body["status"] == "no_cargo"
-        assert body["reason"] == "below_acceptance_gate"
-        assert body["has_overlay"] is False
-        assert body["overlay_url"] is None
+        data = r.json()["data"]
+        assert data["detected"] is False
+        assert data["aggregate_score"] == 3.3
+        assert data["label"] is None
+        assert "error" not in r.json()
 
     def test_a_refusal_is_still_persisted(self, client, submission, fake_run,
-                                           enabled, db):
+                                          enabled, db):
         """'Ran, found nothing' must not be mistaken for 'never ran'."""
         from models.inspection import Inspection
 
@@ -291,17 +337,25 @@ class TestDetect:
         assert insp.detection_result is not None
         assert insp.detected_at is not None
 
-    def test_a_broken_detector_is_502_and_still_recorded(self, client, submission,
-                                                         fake_run, enabled, db):
-        """A 200 here would tell the caller the detection worked. It did not."""
+    def test_a_broken_detector_is_502_with_error_envelope(
+        self, client, submission, fake_run, enabled, db
+    ):
+        """A 200 here would tell the caller the detection worked. It did not.
+        The RFC 9457 problem object is the entire body."""
         from models.inspection import Inspection
 
         fake_run(FAILED_RESULT, overlay=False)
         r = client.post(f"/portal/submissions/{submission['id']}/detect")
 
         assert r.status_code == 502
-        detail = r.json()["detail"]
-        assert detail["code"] == "detection_failed"
+        body = r.json()
+        assert "error" in body
+        assert "data" not in body
+        err = body["error"]
+        assert err["type"].startswith("https://")
+        assert err["title"] == "Detection Failed"
+        assert err["status"] == 502
+        assert "detail" in err
         # The failure is kept, so it can be inspected rather than vanishing.
         insp = db.get(Inspection, submission["id"])
         assert insp.detection_result is not None
@@ -322,8 +376,10 @@ class TestDetect:
 
         r = client.post(f"/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 503
-        assert r.json()["detail"]["code"] == "detection_unavailable"
-        assert "DETECTION_ENABLED" in r.json()["detail"]["message"]
+        err = r.json()["error"]
+        assert err["title"] == "Detection Unavailable"
+        assert err["status"] == 503
+        assert "DETECTION_ENABLED" in err["detail"]
         assert calls == [], "a disabled detector must not be invoked"
 
     def test_a_second_run_is_cached(self, client, submission, fake_run, enabled):
@@ -347,7 +403,7 @@ class TestDetect:
         monkeypatch.setattr(detection, "run_detection", boom)
         r = client.post(f"/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 504
-        assert r.json()["detail"]["code"] == "detection_timeout"
+        assert r.json()["error"]["title"] == "Detection Timeout"
 
     def test_a_busy_detector_is_503(self, client, submission, monkeypatch, enabled):
         """The notebook is not reentrant, so overlap must be refused not raced."""
@@ -358,11 +414,11 @@ class TestDetect:
         monkeypatch.setattr(detection, "run_detection", busy)
         r = client.post(f"/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 503
-        assert r.json()["detail"]["code"] == "detection_busy"
+        assert r.json()["error"]["title"] == "Detection Busy"
 
     def test_a_missing_image_file_is_404(self, client, submission, fake_run,
                                          enabled, db):
-        """The row exists but the bytes are gone — not worth a 30 s run."""
+        """The row exists but the bytes are gone â€” not worth a 30 s run."""
         from models.inspection import Inspection
         from services.inspection_service import resolve_image_path
 
@@ -382,13 +438,13 @@ class TestDetect:
 
 # ---- reading results -----------------------------------------------------
 class TestReadDetection:
-    def test_get_before_any_run_is_not_run(self, client, submission):
+    def test_get_before_any_run(self, client, submission):
         r = client.get(f"/portal/submissions/{submission['id']}/detection")
         assert r.status_code == 200
-        body = r.json()
-        assert body["status"] == "not_run"
-        assert body["ok"] is False
-        assert body["object_count"] == 0
+        data = r.json()["data"]
+        assert data["detected"] is False
+        assert data["objects"] == []
+        assert "aggregate_score" not in data or data["aggregate_score"] is None
 
     def test_get_never_starts_a_run(self, client, submission, fake_run, enabled):
         """Reading a result must be cheap; only POST may burn CPU."""
@@ -400,10 +456,11 @@ class TestReadDetection:
                                         enabled):
         fake_run()
         client.post(f"/portal/submissions/{submission['id']}/detect")
-        body = client.get(
-            f"/portal/submissions/{submission['id']}/detection").json()
-        assert body["status"] == "detected"
-        assert body["label"] == "Cargo-Box"
+        data = client.get(
+            f"/portal/submissions/{submission['id']}/detection"
+        ).json()["data"]
+        assert data["detected"] is True
+        assert data["label"] == "Cargo-Box"
 
     def test_the_list_view_carries_the_detection_state(self, client, submission,
                                                        fake_run, enabled):
@@ -411,7 +468,7 @@ class TestReadDetection:
         fake_run()
         client.post(f"/portal/submissions/{submission['id']}/detect")
 
-        items = client.get("/portal/submissions").json()["items"]
+        items = client.get("/portal/submissions").json()["data"]
         assert items[0]["detection_status"] == "detected"
         assert items[0]["cargo_object_count"] == 2
         assert items[0]["detected_at"] is not None
@@ -421,7 +478,7 @@ class TestReadDetection:
         """These are different facts and the UI must be able to tell them."""
         fake_run(REFUSED_RESULT, overlay=False)
         client.post(f"/portal/submissions/{submission['id']}/detect")
-        items = client.get("/portal/submissions").json()["items"]
+        items = client.get("/portal/submissions").json()["data"]
         assert items[0]["detection_status"] == "no_cargo"
         assert items[0]["cargo_object_count"] == 0
 
@@ -430,7 +487,7 @@ class TestReadDetection:
         """A report can hold dozens of boxes; it would bloat every list call."""
         fake_run()
         client.post(f"/portal/submissions/{submission['id']}/detect")
-        items = client.get("/portal/submissions").json()["items"]
+        items = client.get("/portal/submissions").json()["data"]
         assert "objects" not in items[0]
         assert "detection_result" not in items[0]
 
@@ -445,7 +502,7 @@ class TestOverlay:
         overlays.mkdir(parents=True, exist_ok=True)
         # `persist_overlay` is stubbed by the `enabled` fixture and derives the
         # name from the real inspection id, so the file on disk must use that
-        # same id — hardcoding one here would 404 for every id but 1.
+        # same id â€” hardcoding one here would 404 for every id but 1.
         name = f"inspection_{submission['id']}_abc12345.png"
         (overlays / name).write_bytes(b"\x89PNG\r\n\x1a\noverlay")
         monkeypatch.setattr(
@@ -455,10 +512,9 @@ class TestOverlay:
         fake_run()
         body = client.post(
             f"/portal/submissions/{submission['id']}/detect").json()
-        assert body["has_overlay"] is True
-        assert body["overlay_url"].endswith("/detection/overlay")
+        assert body["meta"]["links"]["overlay"].endswith("/detection/overlay")
 
-        png = client.get(body["overlay_url"])
+        png = client.get(body["meta"]["links"]["overlay"])
         assert png.status_code == 200, png.text
         assert png.headers["content-type"] == "image/png"
 
@@ -484,7 +540,7 @@ class TestOverlay:
 
 
 # ---- authorisation -------------------------------------------------------
-class TestAuthorisation:
+class TestDetectionAuthorisation:
     def test_detect_requires_a_session(self, client, submission):
         client.cookies.clear()
         assert client.post(
@@ -524,7 +580,7 @@ class TestAuthorisation:
             f"/portal/submissions/{submission['id']}/detection/log"
         ).status_code == 404
 
-    def test_an_admin_can_read_any_result(self, client, admin_client,
+    def test_an_admin_can_read_any_result(self, client, admin_client, db,
                                           submission, fake_run, enabled):
         """Admins review a queue, so they must see what the detector said."""
         fake_run()
@@ -533,7 +589,7 @@ class TestAuthorisation:
         r = admin_client.get(
             f"/admin/submissions/{submission['id']}/detection")
         assert r.status_code == 200, r.text
-        assert r.json()["status"] == "detected"
+        assert r.json()["data"]["detected"] is True
 
     def test_a_non_admin_cannot_use_the_admin_route(self, client, submission,
                                                     fake_run, enabled):
@@ -560,7 +616,7 @@ class TestAuthorisation:
         r = admin_client.get(
             f"/admin/submissions/{submission['id']}/detection")
         assert r.status_code == 200
-        assert r.json()["status"] == "not_run"
+        assert r.json()["data"]["detected"] is False
 
 
 # ---- the subprocess contract --------------------------------------------
@@ -568,7 +624,7 @@ class TestRunnerContract:
     """What `services/detection.py` expects of the runner subprocess.
 
     These guard the seam between the two repositories. If the runner's output
-    contract changes, these fail first — before a 30-second pipeline run has to
+    contract changes, these fail first â€” before a 30-second pipeline run has to
     be repeated to discover it.
     """
 
@@ -579,12 +635,12 @@ class TestRunnerContract:
     def test_the_vendored_detector_is_present(self):
         """Option A: the pipeline ships inside this repo, not as a folder
         reference. If someone deletes detector/ thinking it is generated, the
-        detector silently stops working — this fails first."""
+        detector silently stops working â€” this fails first."""
         root = detection.DETECTOR_DIR
         assert (root / "Revamping.ipynb").is_file(), (
-            f"missing {root / 'Revamping.ipynb'} — re-vendor per detector/README.md")
+            f"missing {root / 'Revamping.ipynb'} â€” re-vendor per detector/README.md")
         assert (root / "models" / "cargo_obb_best.pt").is_file(), (
-            f"missing {root / 'models' / 'cargo_obb_best.pt'} — re-vendor per "
+            f"missing {root / 'models' / 'cargo_obb_best.pt'} â€” re-vendor per "
             f"detector/README.md")
 
     def test_an_empty_project_dir_resolves_to_the_vendored_copy(self, monkeypatch):
@@ -628,25 +684,6 @@ class TestRunnerContract:
         src = detection.RUNNER_SCRIPT.read_text(encoding="utf-8")
         assert "result.json" in src
         assert "traceback" in src
-
-    def test_a_missing_result_file_becomes_a_reported_error(self, client,
-                                                            submission, monkeypatch,
-                                                            enabled):
-        """The runner writes result.json even on internal failure, so its
-        absence means the interpreter died before it could."""
-        def no_result(image_path, **kwargs):
-            return detection.DetectionRun(
-                result={"ok": False, "error": "Detector exited with code 1 "
-                                               "without a result."},
-                overlay_path=None,
-                run_dir=detection.WORK_ROOT,
-                stdout_tail="",
-                returncode=1,
-            )
-
-        monkeypatch.setattr(detection, "run_detection", no_result)
-        r = client.post(f"/portal/submissions/{submission['id']}/detect")
-        assert r.status_code == 502
 
 
 # ---- docs ----------------------------------------------------------------

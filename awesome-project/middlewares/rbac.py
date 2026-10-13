@@ -18,6 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from errors import problem
 from models.user import User
 from services.rbac import Role, _coerce_role
 
@@ -76,23 +77,19 @@ class RoleAuthorizationMiddleware(BaseHTTPMiddleware):
                     User.id == int(user_id))
             ).one_or_none()
             if row is None or not row.is_active:
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "Account is no longer active.",
-                             "code": "authentication_required"},
+                return problem(
+                    401, "Account is no longer active.",
+                    code="authentication_required",
                 )
             if _coerce_role(row.role) != Role.ADMIN:
                 logger.info(
                     "RBAC deny: user %s (%s) tried %s %s",
                     user_id, row.role, request.method, path,
                 )
-                return JSONResponse(
-                    status_code=403,
-                    content={
-                        "detail": "Administrator access required.",
-                        "code": "insufficient_role",
-                        "your_role": row.role,
-                    },
+                return problem(
+                    403, "Administrator access required.",
+                    code="insufficient_role",
+                    extra={"your_role": row.role},
                 )
             request.state.role = row.role
         finally:

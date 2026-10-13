@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ from schemas.responses.inspection import (
     InspectionSummary,
     TagOut,
 )
+from schemas.responses.envelope import envelope, list_links, pagination_meta
 from services.idempotency_service import IdempotencyService
 from services.inspection_service import InspectionService, resolve_image_path
 from services.rbac import SELF_ASSIGNABLE_STATUSES, require_permission
@@ -56,7 +57,6 @@ portal = APIRouter(prefix="/portal", tags=["Portal"])
 
 @portal.get(
     "/cargo-types",
-    response_model=list[CargoTypeOut],
     summary="Cargo lookup table (reference data, needed by the upload form)",
 )
 def portal_cargo_types(
@@ -69,7 +69,7 @@ def portal_cargo_types(
     form cannot render its dropdown without them — so a signed-in user needs
     this even though they hold no admin permission.
     """
-    return InspectionService(db).list_cargo_types()
+    return envelope(InspectionService(db).list_cargo_types())
 
 
 @portal.get(
@@ -81,7 +81,7 @@ def portal_summary(
 ):
     svc = InspectionService(db)
     mine = svc.list_inspections(skip=0, limit=1, user_id=user.id)
-    return {
+    return envelope({
         "total": mine.total,
         "stats": svc.stats(user_id=user.id),
         "cargo_types": [
@@ -89,17 +89,16 @@ def portal_summary(
             for c in svc.list_cargo_types()
         ],
         "has_any": mine.total > 0,
-    }
+    })
 
 
 @portal.get(
     "/submissions",
-    response_model=InspectionListResponse,
     summary="My submissions, paginated",
 )
 def portal_submissions(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(6, ge=1, le=50, description="Cards per page"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(6, ge=1, le=50, description="Cards per page"),
     cargo_type: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     tag: Optional[str] = Query(None),
@@ -108,7 +107,9 @@ def portal_submissions(
     user: User = Depends(require_current_user),
     db: Session = Depends(get_db),
 ):
-    page = InspectionService(db).list_inspections(
+    skip = (page - 1) * per_page
+    limit = per_page
+    result = InspectionService(db).list_inspections(
         skip=skip,
         limit=limit,
         user_id=user.id,
@@ -118,17 +119,30 @@ def portal_submissions(
         search=search,
         sort=sort,
     )
-    return _page(
-        [InspectionResponse.model_validate(i) for i in page.items],
-        page.total,
-        page.skip,
-        page.limit,
+    items = [InspectionResponse.model_validate(i).model_dump(mode="json")
+             for i in result.items]
+    total_pages = -(-result.total // limit) if limit else 0
+    return envelope(
+        items,
+        meta=pagination_meta(
+            page=page,
+            per_page=limit,
+            total=result.total,
+            total_pages=total_pages,
+        ),
+        links=list_links(
+            base_path="/portal/submissions",
+            page=page,
+            per_page=limit,
+            total_pages=total_pages,
+            query={"status": status_filter, "cargo_type": cargo_type,
+                   "tag": tag, "search": search, "sort": sort},
+        ),
     )
 
 
 @portal.post(
     "/submissions",
-    response_model=InspectionResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Upload a new submission",
 )
@@ -143,6 +157,7 @@ async def portal_create_submission(
     ] = None,
     user: User = Depends(require_current_user),
     db: Session = Depends(get_db),
+    response: Response = None,  # type: ignore[assignment]
 ):
     """Upload without re-typing details.
 
@@ -156,8 +171,13 @@ async def portal_create_submission(
     if idempotency_key:
         replay = idem.lookup(idempotency_key, "POST /portal/submissions")
         if replay is not None:
+            stored = replay.response
             return JSONResponse(
-                status_code=replay.status_code, content=replay.response
+                status_code=replay.status_code,
+                content=envelope(
+                    stored,
+                    links={"self": f"/portal/submissions/{stored['id']}"},
+                ),
             )
 
     if status not in SELF_ASSIGNABLE_STATUSES:
@@ -197,12 +217,12 @@ async def portal_create_submission(
     body = InspectionResponse.model_validate(insp).model_dump(mode="json")
     if idempotency_key:
         idem.store(idempotency_key, "POST /portal/submissions", 201, body)
-    return body
+    response.headers["Location"] = f"/portal/submissions/{insp.id}"
+    return envelope(body, links={"self": f"/portal/submissions/{insp.id}"})
 
 
 @portal.get(
     "/submissions/{inspection_id}",
-    response_model=InspectionResponse,
     summary="One of the caller's submissions",
 )
 def portal_submission_detail(
@@ -215,7 +235,10 @@ def portal_submission_detail(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found"
         )
-    return InspectionResponse.model_validate(insp)
+    return envelope(
+        InspectionResponse.model_validate(insp).model_dump(mode="json"),
+        links={"self": f"/portal/submissions/{insp.id}"},
+    )
 
 
 @portal.delete(

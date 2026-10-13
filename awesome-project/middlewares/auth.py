@@ -17,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from errors import problem
 from services.security import COOKIE_NAME, decode_access_token
 
 logger = logging.getLogger("app.auth")
@@ -96,8 +97,10 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     def _deny(
         self, request: Request, code: int, detail: str, *, needs_auth: bool
     ) -> JSONResponse:
-        body = {"detail": detail}
-        if needs_auth:
-            # Lets the UI distinguish "log in" from "you may not do this".
-            body["code"] = "authentication_required"
-        return JSONResponse(status_code=code, content=body, headers={"X-Auth": "required"})
+        # Lets the UI distinguish "log in" from "you may not do this".
+        resp = problem(
+            code, detail,
+            code="authentication_required" if needs_auth else None,
+        )
+        resp.headers["X-Auth"] = "required"
+        return resp

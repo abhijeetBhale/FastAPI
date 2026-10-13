@@ -5,28 +5,30 @@ from sqlalchemy.orm import Session
 
 from config import get_settings
 from database import get_db
+from schemas.responses.envelope import envelope
 from schemas.responses.health import HealthResponse, ReadinessResponse
 from services.health_service import HealthService
 
 router = APIRouter(tags=["Health"])
 
 
-@router.get("/health", response_model=HealthResponse, summary="Liveness probe")
+@router.get("/health", summary="Liveness probe")
 def health():
     """Process-level check. Does not touch the database, so it stays fast and
     keeps reporting healthy during a database outage."""
     settings = get_settings()
-    return HealthResponse(
-        status="ok",
-        service=settings.app_title,
-        version=settings.app_version,
-        timestamp=datetime.now(),
+    return envelope(
+        HealthResponse(
+            status="ok",
+            service=settings.app_title,
+            version=settings.app_version,
+            timestamp=datetime.now(),
+        ).model_dump(mode="json")
     )
 
 
 @router.get(
     "/health/ready",
-    response_model=ReadinessResponse,
     summary="Readiness probe",
     responses={503: {"description": "A dependency is unavailable"}},
 )
@@ -36,9 +38,11 @@ def readiness(response: Response, db: Session = Depends(get_db)):
     ok, latency_ms, error = HealthService(db).check_database()
     if not ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return ReadinessResponse(
-        status="ok" if ok else "unavailable",
-        database="up" if ok else "down",
-        latency_ms=round(latency_ms, 3),
-        detail=error,
+    return envelope(
+        ReadinessResponse(
+            status="ok" if ok else "unavailable",
+            database="up" if ok else "down",
+            latency_ms=round(latency_ms, 3),
+            detail=error,
+        ).model_dump(mode="json")
     )

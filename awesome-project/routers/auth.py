@@ -11,6 +11,7 @@ from schemas.responses.auth import (
     MeResponse,
     MessageResponse,
 )
+from schemas.responses.envelope import envelope
 from services.auth_service import AuthError, AuthService, PasswordWeak
 from services.rbac import permissions_for
 from services.security import (
@@ -39,7 +40,6 @@ def _current_payload(user: User, db: Session) -> CurrentUserResponse:
 
 @router.post(
     "/register",
-    response_model=LoginResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create an account and sign in",
 )
@@ -60,13 +60,17 @@ def register(
     settings = get_settings()
     token = create_access_token(user)
     set_session_cookie(response, token, expires_hours=settings.jwt_expires_hours)
-    return LoginResponse(
-        user=_current_payload(user, db),
-        expires_in_hours=settings.jwt_expires_hours,
+    response.headers["Location"] = "/auth/me"
+    return envelope(
+        LoginResponse(
+            user=_current_payload(user, db),
+            expires_in_hours=settings.jwt_expires_hours,
+        ).model_dump(mode="json"),
+        links={"self": "/auth/me"},
     )
 
 
-@router.post("/login", response_model=LoginResponse, summary="Sign in")
+@router.post("/login", summary="Sign in")
 def login(
     data: LoginRequest, response: Response, db: Session = Depends(get_db)
 ):
@@ -78,21 +82,23 @@ def login(
     settings = get_settings()
     token = create_access_token(user)
     set_session_cookie(response, token, expires_hours=settings.jwt_expires_hours)
-    return LoginResponse(
-        user=_current_payload(user, db),
-        expires_in_hours=settings.jwt_expires_hours,
+    return envelope(
+        LoginResponse(
+            user=_current_payload(user, db),
+            expires_in_hours=settings.jwt_expires_hours,
+        ).model_dump(mode="json"),
+        links={"self": "/auth/me"},
     )
 
 
-@router.post("/logout", response_model=MessageResponse, summary="Sign out")
+@router.post("/logout", summary="Sign out")
 def logout(response: Response):
     clear_session_cookie(response)
-    return MessageResponse(detail="Signed out")
+    return envelope(MessageResponse(detail="Signed out").model_dump(mode="json"))
 
 
 @router.get(
     "/me",
-    response_model=MeResponse,
     summary="The signed-in user and their permissions (portal bootstrap)",
 )
 def me(user: User = Depends(require_current_user), db: Session = Depends(get_db)):
@@ -101,16 +107,18 @@ def me(user: User = Depends(require_current_user), db: Session = Depends(get_db)
 
     The permission list drives which controls the UI renders.
     """
-    return MeResponse(
-        user=_current_payload(user, db),
-        permissions=permissions_for(user),
-        is_admin=user.role == "admin",
+    return envelope(
+        MeResponse(
+            user=_current_payload(user, db),
+            permissions=permissions_for(user),
+            is_admin=user.role == "admin",
+        ).model_dump(mode="json"),
+        links={"self": "/auth/me"},
     )
 
 
 @router.post(
     "/set-password",
-    response_model=MessageResponse,
     summary="Set a password on an account that has none",
 )
 def set_password(
@@ -142,11 +150,11 @@ def set_password(
         create_access_token(user),
         expires_hours=settings.jwt_expires_hours,
     )
-    return MessageResponse(detail="Password set")
+    return envelope(MessageResponse(detail="Password set").model_dump(mode="json"))
 
 
 @router.post(
-    "/change-password", response_model=MessageResponse, summary="Change your password"
+    "/change-password", summary="Change your password"
 )
 def change_password(
     payload: dict,
@@ -168,4 +176,6 @@ def change_password(
         raise HTTPException(
             status_code=422, detail=f"Password {' and '.join(e.problems)}."
         )
-    return MessageResponse(detail="Password updated")
+    return envelope(
+        MessageResponse(detail="Password updated").model_dump(mode="json")
+    )

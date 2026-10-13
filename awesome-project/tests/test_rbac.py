@@ -41,7 +41,7 @@ def users(client, db, png_bytes):
     client.post("/auth/register", json={"name": "Regular", "email": "reg@example.com",
                                         "password": "quay-crane-42"})
     reg = client.post("/portal/submissions", data={"cargo_type": "scrap-steel"},
-                      files={"image": ("r.png", png_bytes(), "image/png")}).json()
+                      files={"image": ("r.png", png_bytes(), "image/png")}).json()["data"]
     client.post("/auth/logout")
     client.cookies.clear()
 
@@ -52,7 +52,7 @@ def users(client, db, png_bytes):
     boss.role = Role.ADMIN.value
     db.commit()
     adm = client.post("/portal/submissions", data={"cargo_type": "thermal-coal"},
-                      files={"image": ("a.png", png_bytes(), "image/png")}).json()
+                      files={"image": ("a.png", png_bytes(), "image/png")}).json()["data"]
     return {"reg": reg, "adm": adm}
 
 
@@ -88,7 +88,7 @@ class TestPermissionModel:
         r = client.post("/auth/register", json={"name": "P", "email": "p@x.com",
                                                 "password": "quay-crane-42"})
         assert r.status_code == 201
-        me = client.get("/auth/me").json()
+        me = client.get("/auth/me").json()["data"]
         assert me["is_admin"] is False
         assert "submissions:review:any" not in me["permissions"]
 
@@ -164,7 +164,7 @@ class TestPreviouslyOpenRoutes:
         r = client.patch(f"/admin/submissions/{users['reg']['id']}",
                          json={"status": "approved"})
         assert r.status_code == 200
-        assert r.json()["status"] == "approved"
+        assert r.json()["data"]["status"] == "approved"
 
 
 # ------------------------------------------------------------------ review flow
@@ -173,22 +173,22 @@ class TestAdminReview:
         as_user(client, "boss@example.com")
         r = client.get("/admin/submissions")
         assert r.status_code == 200
-        ids = {i["id"] for i in r.json()["items"]}
+        ids = {i["id"] for i in r.json()["data"]}
         assert ids == {users["reg"]["id"], users["adm"]["id"]}
 
     def test_pending_queue_holds_submitted_only(self, client, users):
         as_user(client, "boss@example.com")
-        assert client.get("/admin/submissions/pending").json()["total"] == 2
+        assert client.get("/admin/submissions/pending").json()["meta"]["pagination"]["total"] == 2
 
         client.post(f"/admin/submissions/{users['reg']['id']}/approve")
-        assert client.get("/admin/submissions/pending").json()["total"] == 1
+        assert client.get("/admin/submissions/pending").json()["meta"]["pagination"]["total"] == 1
 
     def test_approve_records_who_and_when(self, client, users):
         as_user(client, "boss@example.com")
         r = client.post(f"/admin/submissions/{users['reg']['id']}/approve",
                         params={"note": "looks correct"})
         assert r.status_code == 200
-        body = r.json()
+        body = r.json()["data"]
         assert body["status"] == "approved"
         assert body["status_note"] == "looks correct"
         assert body["reviewed_by"] is not None
@@ -198,7 +198,7 @@ class TestAdminReview:
         as_user(client, "boss@example.com")
         r = client.post(f"/admin/submissions/{users['reg']['id']}/reject",
                         params={"note": "blurry"})
-        assert r.json()["status"] == "rejected"
+        assert r.json()["data"]["status"] == "rejected"
 
     def test_user_cannot_approve_anything(self, client, users):
         as_user(client, "reg@example.com")
@@ -222,7 +222,7 @@ class TestAdminReview:
             "action": "approve",
         })
         assert r.status_code == 200
-        body = r.json()
+        body = r.json()["data"]
         assert body["processed"] == 3
         assert sum(1 for x in body["results"] if x["ok"]) == 2
 
@@ -342,7 +342,7 @@ class TestAdminTools:
 
     def test_platform_stats(self, client, users):
         as_user(client, "boss@example.com")
-        s = client.get("/admin/stats").json()
+        s = client.get("/admin/stats").json()["data"]
         assert s["stats"]["inspections"] == 2
         assert s["users"] >= 2
         assert s["by_cargo"]
@@ -352,7 +352,7 @@ class TestAdminTools:
         reg = db.query(User).filter(User.email == "reg@example.com").one()
         r = client.post(f"/admin/users/{reg.id}/role", params={"role": "admin"})
         assert r.status_code == 200
-        assert r.json()["role"] == "admin"
+        assert r.json()["data"]["role"] == "admin"
 
     def test_admin_cannot_demote_self(self, client, users, db):
         as_user(client, "boss@example.com")

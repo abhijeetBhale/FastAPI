@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class UserResponse(BaseModel):
@@ -24,13 +24,3 @@ class UserDetailResponse(UserResponse):
     """
 
     inspection_count: int = 0
-
-
-class UserListResponse(BaseModel):
-    items: list[UserResponse]
-    total: int
-    skip: int
-    limit: int
-    pages: int
-
-    model_config = {"from_attributes": True}

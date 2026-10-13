@@ -1,7 +1,7 @@
-"""Swagger UI / OpenAPI authentication.
+﻿"""Swagger UI / OpenAPI authentication.
 
 Swagger UI's "Authorize" dialog can only hold an apiKey, a bearer token or an
-OAuth2 flow — it has no way to present an httpOnly cookie. So /docs is
+OAuth2 flow â€” it has no way to present an httpOnly cookie. So /docs is
 unusable against a cookie-only API: every protected operation fails 401 and
 there is no control on the page to fix it.
 
@@ -31,7 +31,7 @@ class TestOpenAPISpec:
     def test_a_security_scheme_is_declared(self, client):
         """Without this, Swagger has nothing to render an Authorize dialog for."""
         schemes = client.get("/openapi.json").json()["components"]["securitySchemes"]
-        assert schemes, "no securitySchemes declared — /docs will have no Authorize button"
+        assert schemes, "no securitySchemes declared â€” /docs will have no Authorize button"
 
     def test_the_scheme_is_a_bearer_scheme(self, client):
         """Swagger's Authorize button only works for http/apikey/oauth2."""
@@ -65,7 +65,7 @@ class TestOpenAPISpec:
     @pytest.mark.parametrize("path", ["/auth/login", "/auth/register", "/health"])
     def test_public_operations_are_not_marked(self, client, path):
         """Marking /auth/login as secured makes the docs demand a token you
-        cannot obtain yet — an obvious dead end for a first-time reader."""
+        cannot obtain yet â€” an obvious dead end for a first-time reader."""
         ops = client.get("/openapi.json").json()["paths"][path]
         marked = [m.upper() for m, op in ops.items()
                   if isinstance(op, dict) and m in
@@ -87,7 +87,7 @@ class TestBearerAuthenticates:
         client.cookies.clear()
         me = client.get("/auth/me", headers=bearer(token))
         assert me.status_code == 200
-        assert me.json()["user"]["email"] == "docs@x.com"
+        assert me.json()["data"]["user"]["email"] == "docs@x.com"
 
     def test_bearer_token_reaches_the_middleware_gate(self, client):
         """The bug this guards: the middleware runs before routing, so a valid
@@ -119,7 +119,7 @@ class TestBearerAuthenticates:
 
     def test_bearer_does_not_bypass_ownership(self, client, db):
         """A second credential must not be a second set of rules. This user owns
-        nothing, so another's submission is still a 404 — not a 200."""
+        nothing, so another's submission is still a 404 â€” not a 200."""
         from models.user import User
 
         client.post("/auth/register", json={"name": "Owner", "email": "owner@x.com",
@@ -137,7 +137,7 @@ class TestBearerAuthenticates:
                + chunk(b"IDAT", zlib.compress(raw))
                + chunk(b"IEND", b""))
         owned = client.post("/portal/submissions", data={"cargo_type": "scrap-steel"},
-                            files={"image": ("o.png", png, "image/png")}).json()
+                            files={"image": ("o.png", png, "image/png")}).json()["data"]
         owner_token = client.cookies.get("session_token")
 
         client.post("/auth/logout")
@@ -178,4 +178,4 @@ class TestBearerAuthenticates:
         # Cookie present and valid; header carries a different (bogus) token.
         r = client.get("/auth/me", headers=bearer("garbage.token.here"))
         assert r.status_code == 200
-        assert r.json()["user"]["email"] == "pref@x.com"
+        assert r.json()["data"]["user"]["email"] == "pref@x.com"

@@ -97,9 +97,13 @@ app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
 
 @app.get("/")
 def root():
-    return {
-        "message": "API is running",
-        "ui": "/ui/",
-        "docs": "/docs",
-        "health": "/health",
-    }
+    from schemas.responses.envelope import envelope
+
+    return envelope(
+        {
+            "message": "API is running",
+            "ui": "/ui/",
+            "docs": "/docs",
+            "health": "/health",
+        }
+    )

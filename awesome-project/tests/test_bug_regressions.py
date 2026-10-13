@@ -8,25 +8,25 @@ from __future__ import annotations
 
 
 class TestPaginationBounds:
-    """`limit=-5` used to reach PostgreSQL and surface as a 500."""
+    """`per_page=-5` used to reach PostgreSQL and surface as a 500."""
 
     def test_negative_limit_is_422(self, admin_client):
-        assert admin_client.get("/admin/submissions?limit=-5").status_code == 422
+        assert admin_client.get("/admin/submissions?per_page=-5").status_code == 422
 
     def test_negative_skip_is_422(self, admin_client):
-        assert admin_client.get("/admin/submissions?skip=-1").status_code == 422
+        assert admin_client.get("/admin/submissions?page=0").status_code == 422
 
     def test_zero_limit_is_422(self, admin_client):
-        assert admin_client.get("/admin/submissions?limit=0").status_code == 422
+        assert admin_client.get("/admin/submissions?per_page=0").status_code == 422
 
     def test_absurd_limit_is_422_not_the_whole_table(self, admin_client):
-        assert admin_client.get("/admin/submissions?limit=999999").status_code == 422
+        assert admin_client.get("/admin/submissions?per_page=999999").status_code == 422
 
     def test_non_numeric_is_422(self, admin_client):
-        assert admin_client.get("/admin/submissions?skip=abc").status_code == 422
+        assert admin_client.get("/admin/submissions?page=abc").status_code == 422
 
     def test_valid_bounds_accepted(self, admin_client):
-        assert admin_client.get("/admin/submissions?skip=0&limit=100").status_code == 200
+        assert admin_client.get("/admin/submissions?page=1&per_page=100").status_code == 200
 
 
 class TestNameLength:
@@ -74,7 +74,7 @@ class TestCaseInsensitiveEmail:
             json={"name": "Norm", "email": "MixedCase@Example.COM",
                   "password": "quay-crane-42"},
         )
-        assert r.json()["user"]["email"] == "mixedcase@example.com"
+        assert r.json()["data"]["user"]["email"] == "mixedcase@example.com"
 
     def test_database_index_blocks_concurrent_duplicates(self, db):
         """The service check has a race; the unique index is the real guard.
@@ -104,7 +104,7 @@ class TestCaseInsensitiveEmail:
             json={"name": "Case", "email": "Case@Example.com",
                   "password": "quay-crane-42"},
         )
-        uid = first.json()["user"]["id"]
+        uid = first.json()["data"]["user"]["id"]
         # Register signs the client in as Case; sign back in as admin.
         admin_client.post("/auth/login", json={"email": "admin@example.com",
                                                "password": "quay-crane-42"})
@@ -116,7 +116,7 @@ class TestCaseInsensitiveEmail:
             files={"image": ("a.png", png_bytes(), "image/png")},
         )
         assert r.status_code == 201
-        assert r.json()["user_id"] == uid
+        assert r.json()["data"]["user_id"] == uid
 
 
 class TestErrorHandling:

@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -35,6 +35,7 @@ from schemas.responses.inspection import (
 from schemas.requests.inspection import InspectionCreate, InspectionUpdate
 from schemas.responses.user import UserDetailResponse, UserResponse
 from schemas.errors import jsonable_errors
+from schemas.responses.envelope import envelope, list_links, pagination_meta
 from services.audit_service import AuditService
 from services.detection import overlay_path_for
 from services.idempotency_service import IdempotencyService
@@ -67,12 +68,11 @@ def _page(rows, total, skip, limit) -> InspectionListResponse:
 # --------------------------------------------------------------------- #
 @router.get(
     "/submissions",
-    response_model=InspectionListResponse,
     summary="Every submission, across all users",
 )
 def list_all_submissions(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
     user_id: Optional[int] = Query(None, ge=1),
     cargo_type: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -85,23 +85,40 @@ def list_all_submissions(
 ):
     """No `user_id` is forced here — the whole point is to see everyone."""
     try:
-        page = InspectionService(db).list_inspections(
-            skip=skip, limit=limit, user_id=user_id, cargo_type=cargo_type,
+        skip = (page - 1) * per_page
+        result = InspectionService(db).list_inspections(
+            skip=skip, limit=per_page, user_id=user_id, cargo_type=cargo_type,
             status=status_filter, tag=tag, search=search,
             include_deleted=include_deleted, sort=sort,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    return _page(
-        [InspectionResponse.model_validate(i) for i in page.items],
-        page.total, page.skip, page.limit,
+    items = [InspectionResponse.model_validate(i).model_dump(mode="json")
+             for i in result.items]
+    total_pages = -(-result.total // per_page) if per_page else 0
+    return envelope(
+        items,
+        meta=pagination_meta(
+            page=page,
+            per_page=per_page,
+            total=result.total,
+            total_pages=total_pages,
+        ),
+        links=list_links(
+            base_path="/admin/submissions",
+            page=page,
+            per_page=per_page,
+            total_pages=total_pages,
+            query={"status": status_filter, "cargo_type": cargo_type,
+                   "tag": tag, "search": search, "sort": sort,
+                   "include_deleted": include_deleted},
+        ),
     )
 
 
 @router.post(
     "/submissions",
-    response_model=InspectionResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a submission on behalf of any user (admin only)",
 )
@@ -119,6 +136,7 @@ async def create_submission_admin(
     ] = None,
     admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
     db: Session = Depends(get_db),
+    response: Response = None,  # type: ignore[assignment]
 ):
     """Create an inspection on behalf of any user.
 
@@ -129,8 +147,13 @@ async def create_submission_admin(
     if idempotency_key:
         replay = idem.lookup(idempotency_key, "POST /admin/submissions/")
         if replay is not None:
+            stored = replay.response
             return JSONResponse(
-                status_code=replay.status_code, content=replay.response
+                status_code=replay.status_code,
+                content=envelope(
+                    stored,
+                    links={"self": f"/admin/submissions/{stored['id']}"},
+                ),
             )
 
     if status not in INSPECTION_STATUSES:
@@ -166,27 +189,42 @@ async def create_submission_admin(
     body = InspectionResponse.model_validate(insp).model_dump(mode="json")
     if idempotency_key:
         idem.store(idempotency_key, "POST /admin/submissions/", 201, body)
-    return body
+    response.headers["Location"] = f"/admin/submissions/{insp.id}"
+    return envelope(body, links={"self": f"/admin/submissions/{insp.id}"})
 
 
 @router.get(
     "/submissions/pending",
-    response_model=InspectionListResponse,
     summary="The review queue",
 )
 def pending_submissions(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
     admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
     db: Session = Depends(get_db),
 ):
     """Submitted, not yet decided, oldest first — the work queue."""
-    page = InspectionService(db).list_inspections(
-        skip=skip, limit=limit, status="submitted", sort="created_at"
+    skip = (page - 1) * per_page
+    result = InspectionService(db).list_inspections(
+        skip=skip, limit=per_page, status="submitted", sort="created_at"
     )
-    return _page(
-        [InspectionResponse.model_validate(i) for i in page.items],
-        page.total, page.skip, page.limit,
+    items = [InspectionResponse.model_validate(i).model_dump(mode="json")
+             for i in result.items]
+    total_pages = -(-result.total // per_page) if per_page else 0
+    return envelope(
+        items,
+        meta=pagination_meta(
+            page=page,
+            per_page=per_page,
+            total=result.total,
+            total_pages=total_pages,
+        ),
+        links=list_links(
+            base_path="/admin/submissions/pending",
+            page=page,
+            per_page=per_page,
+            total_pages=total_pages,
+        ),
     )
 
 
@@ -196,14 +234,13 @@ def pending_submissions(
 # inspection id and returns 422.
 @router.get(
     "/submissions/summary",
-    response_model=list[InspectionSummary],
     summary="Per-user aggregates",
 )
 def summary_admin(
     admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
     db: Session = Depends(get_db),
 ):
-    return InspectionService(db).summary_by_user()
+    return envelope(InspectionService(db).summary_by_user())
 
 
 @router.get(
@@ -216,10 +253,12 @@ def orphaned_users_admin(
 ):
     """Users who exist but have never submitted — the onboarding-funnel query."""
     users = InspectionService(db).users_without_inspections()
-    return [{"id": u.id, "name": u.name, "email": u.email} for u in users]
+    return envelope(
+        [{"id": u.id, "name": u.name, "email": u.email} for u in users]
+    )
 
 
-@router.get("/submissions/{inspection_id}", response_model=InspectionResponse)
+@router.get("/submissions/{inspection_id}")
 def get_any_submission(
     inspection_id: int,
     include_deleted: bool = Query(False),
@@ -240,7 +279,10 @@ def get_any_submission(
     )
     if not insp:
         raise HTTPException(status_code=404, detail="Submission not found")
-    return insp
+    return envelope(
+        InspectionResponse.model_validate(insp).model_dump(mode="json"),
+        links={"self": f"/admin/submissions/{insp.id}"},
+    )
 
 
 def _decide(
@@ -282,12 +324,14 @@ def _decide(
     )
     db.commit()
     db.refresh(insp)
-    return insp
+    return envelope(
+        InspectionResponse.model_validate(insp).model_dump(mode="json"),
+        links={"self": f"/admin/submissions/{insp.id}"},
+    )
 
 
 @router.post(
     "/submissions/{inspection_id}/approve",
-    response_model=InspectionResponse,
     summary="Approve a submission",
 )
 def approve_submission(
@@ -301,7 +345,6 @@ def approve_submission(
 
 @router.post(
     "/submissions/{inspection_id}/reject",
-    response_model=InspectionResponse,
     summary="Reject a submission",
 )
 def reject_submission(
@@ -348,12 +391,11 @@ def bulk_decide(
             results.append(
                 {"id": insp_id, "ok": False, "reason": exc.detail}
             )
-    return {"processed": len(results), "results": results}
+    return envelope({"processed": len(results), "results": results})
 
 
 @router.patch(
     "/submissions/{inspection_id}",
-    response_model=InspectionResponse,
     summary="Partial update (admin only)",
 )
 def patch_submission(
@@ -374,7 +416,10 @@ def patch_submission(
         raise HTTPException(status_code=400, detail=str(e))
     if not insp:
         raise HTTPException(status_code=404, detail="Submission not found")
-    return insp
+    return envelope(
+        InspectionResponse.model_validate(insp).model_dump(mode="json"),
+        links={"self": f"/admin/submissions/{insp.id}"},
+    )
 
 
 @router.get(
@@ -397,7 +442,7 @@ def admin_submission_detection(
     yet — the submission exists, it simply has no result, and conflating those
     would be misleading.
     """
-    from routers.detection import _to_report
+    from routers.detection import _to_envelope
 
     insp = (
         db.get(Inspection, inspection_id)
@@ -406,12 +451,14 @@ def admin_submission_detection(
     )
     if not insp:
         raise HTTPException(status_code=404, detail="Submission not found")
-    report = _to_report(insp)
+    envelope = _to_envelope(insp)
     # The overlay is served from the portal path, which is owner-scoped, so an
     # admin is pointed at the admin route instead.
-    if report.overlay_url:
-        report.overlay_url = f"/admin/submissions/{insp.id}/detection/overlay"
-    return report
+    if envelope.meta.links and envelope.meta.links.overlay:
+        envelope.meta.links.overlay = (
+            f"/admin/submissions/{insp.id}/detection/overlay"
+        )
+    return envelope
 
 
 @router.get(
@@ -475,7 +522,7 @@ def admin_submission_image(
     )
 
 
-@router.post("/submissions/{inspection_id}/restore", response_model=InspectionResponse)
+@router.post("/submissions/{inspection_id}/restore")
 def restore_submission(
     inspection_id: int,
     admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
@@ -484,7 +531,10 @@ def restore_submission(
     insp = InspectionService(db).restore(inspection_id)
     if not insp:
         raise HTTPException(status_code=404, detail="Not found or not deleted")
-    return insp
+    return envelope(
+        InspectionResponse.model_validate(insp).model_dump(mode="json"),
+        links={"self": f"/admin/submissions/{insp.id}"},
+    )
 
 
 @router.delete(
@@ -544,7 +594,7 @@ def platform_stats(
             .order_by(func.count(Inspection.id).desc())
         ).all()
     ]
-    return {
+    return envelope({
         "stats": svc.stats(),
         "by_status": by_status,
         "by_cargo": by_cargo,
@@ -552,7 +602,7 @@ def platform_stats(
         "admins": db.execute(
             select(func.count(User.id)).where(User.role == Role.ADMIN.value)
         ).scalar_one(),
-    }
+    })
 
 
 # --------------------------------------------------------------------- #
@@ -560,8 +610,8 @@ def platform_stats(
 # --------------------------------------------------------------------- #
 @router.get("/audit", summary="Recent audit entries")
 def read_audit(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
     entity_type: Optional[str] = Query(None),
     action: Optional[str] = Query(None),
     admin: User = Depends(require_permission(P_AUDIT_READ)),
@@ -577,25 +627,38 @@ def read_audit(
     total = db.execute(
         select(func.count()).select_from(q.order_by(None).subquery())
     ).scalar_one()
-    rows = db.execute(q.offset(skip).limit(limit)).scalars().all()
+    skip = (page - 1) * per_page
+    rows = db.execute(q.offset(skip).limit(per_page)).scalars().all()
 
-    return {
-        "total": total,
-        "skip": skip,
-        "limit": limit,
-        "items": [
-            {
-                "id": r.id,
-                "action": r.action,
-                "entity_type": r.entity_type,
-                "entity_id": r.entity_id,
-                "actor_user_id": r.actor_user_id,
-                "detail": r.detail,
-                "created_at": r.created_at,
-            }
-            for r in rows
-        ],
-    }
+    items = [
+        {
+            "id": r.id,
+            "action": r.action,
+            "entity_type": r.entity_type,
+            "entity_id": r.entity_id,
+            "actor_user_id": r.actor_user_id,
+            "detail": r.detail,
+            "created_at": r.created_at,
+        }
+        for r in rows
+    ]
+    total_pages = -(-total // per_page) if per_page else 0
+    return envelope(
+        items,
+        meta=pagination_meta(
+            page=page,
+            per_page=per_page,
+            total=total,
+            total_pages=total_pages,
+        ),
+        links=list_links(
+            base_path="/admin/audit",
+            page=page,
+            per_page=per_page,
+            total_pages=total_pages,
+            query={"entity_type": entity_type, "action": action},
+        ),
+    )
 
 
 # --------------------------------------------------------------------- #
@@ -603,7 +666,6 @@ def read_audit(
 # --------------------------------------------------------------------- #
 @router.get(
     "/cargo-types",
-    response_model=list[CargoTypeOut],
     summary="Cargo lookup table (admin)",
 )
 def list_cargo_types_admin(
@@ -611,24 +673,41 @@ def list_cargo_types_admin(
     db: Session = Depends(get_db),
 ):
     """Admin counterpart of `/portal/cargo-types`."""
-    return InspectionService(db).list_cargo_types()
+    return envelope(InspectionService(db).list_cargo_types())
 
 
 # users
 # --------------------------------------------------------------------- #
-@router.get("/users", response_model=list[UserResponse], summary="All users")
+@router.get("/users", summary="All users")
 def list_users_admin(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(100, ge=1, le=500),
     admin: User = Depends(require_permission(P_USERS_MANAGE)),
     db: Session = Depends(get_db),
 ):
-    return list(db.execute(select(User).order_by(User.id).offset(skip).limit(limit)).scalars())
+    skip = (page - 1) * per_page
+    users = list(db.execute(select(User).order_by(User.id).offset(skip).limit(per_page)).scalars())
+    total = db.execute(select(func.count(User.id))).scalar_one()
+    total_pages = -(-total // per_page) if per_page else 0
+    return envelope(
+        [UserResponse.model_validate(u).model_dump(mode="json") for u in users],
+        meta=pagination_meta(
+            page=page,
+            per_page=per_page,
+            total=total,
+            total_pages=total_pages,
+        ),
+        links=list_links(
+            base_path="/admin/users",
+            page=page,
+            per_page=per_page,
+            total_pages=total_pages,
+        ),
+    )
 
 
 @router.get(
     "/users/{user_id}",
-    response_model=UserDetailResponse,
     summary="Read one user (admin only)",
 )
 def get_user_admin(
@@ -640,13 +719,16 @@ def get_user_admin(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     svc = UserService(db)
-    return UserDetailResponse(
-        **UserResponse.model_validate(user).model_dump(),
-        inspection_count=svc.get_inspection_count(user_id),
+    return envelope(
+        UserDetailResponse(
+            **UserResponse.model_validate(user).model_dump(),
+            inspection_count=svc.get_inspection_count(user_id),
+        ).model_dump(mode="json"),
+        links={"self": f"/admin/users/{user.id}"},
     )
 
 
-@router.post("/users/{user_id}/role", response_model=UserResponse)
+@router.post("/users/{user_id}/role")
 def set_role(
     user_id: int,
     role: str = Query(..., pattern="^(user|admin)$"),
@@ -669,4 +751,7 @@ def set_role(
     )
     db.commit()
     db.refresh(user)
-    return user
+    return envelope(
+        UserResponse.model_validate(user).model_dump(mode="json"),
+        links={"self": f"/admin/users/{user.id}"},
+    )

@@ -9,15 +9,21 @@ Two surfaces, matching the rest of the app:
 
 Every route follows the app's existing rule: a record that belongs to someone
 else returns **404, not 403**, so ids cannot be enumerated.
+
+Response envelope (see `schemas/responses/detection.py`):
+
+* Success: `{ "data": …, "meta": … }` — no `error` key.
+* Failure: `{ "error": { type, title, status, detail } }` — RFC 9457.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from config import get_settings
@@ -26,8 +32,15 @@ from models.inspection import Inspection
 from models.user import User
 from schemas.responses.detection import (
     DetectionAvailability,
+    DetectionData,
     DetectionLog,
-    DetectionReport,
+    DetectionMeta,
+    DetectionResponse,
+    ImageContext,
+    Links,
+    MaskMetrics,
+    ModelBoxes,
+    Rect,
 )
 from services import detection
 from services.inspection_service import InspectionService, resolve_image_path
@@ -53,58 +66,108 @@ def _load_owned(db: Session, inspection_id: int, user: User) -> Inspection:
     return insp
 
 
-def _to_report(
-    insp: Inspection, payload: dict | None = None, *, run=None
-) -> DetectionReport:
-    """Assemble a response from the stored result, or a fresh run's.
+def _to_rect(box_px: list | None) -> Rect | None:
+    """Convert `[x1, y1, x2, y2]` to a self-describing Rect."""
+    if not box_px or len(box_px) != 4:
+        return None
+    x1, y1, x2, y2 = box_px
+    return Rect(x=int(x1), y=int(y1), w=int(x2 - x1), h=int(y2 - y1))
+
+
+def _error_response(
+    http_status: int, title: str, detail: str, type_uri: str
+) -> Response:
+    """Build an RFC 9457 problem response.
+
+    `data` and `meta` are omitted on failure — the error object is the
+    entire body. The HTTP status code carries transport-level success;
+    the JSON body never needs a `success` flag.
+    """
+    return Response(
+        content=json.dumps({
+            "error": {
+                "type": type_uri,
+                "title": title,
+                "status": http_status,
+                "detail": detail,
+            }
+        }),
+        status_code=http_status,
+        media_type="application/problem+json",
+    )
+
+
+def _to_envelope(
+    insp: Inspection, payload: dict | None = None
+) -> DetectionResponse:
+    """Assemble the `{data, meta}` envelope from a stored or fresh result.
 
     `payload` wins when given, so a run that just completed is reflected
     immediately rather than waiting for a re-read.
+
+    Flat arrays become self-describing Rect objects; related fields are
+    grouped; derivable fields (`ok`, `status`, `reason`, `object_count`,
+    `box_fraction_of_frame`, `has_overlay`) are dropped.
     """
     source = payload if payload is not None else (insp.detection_result or {})
-    ok = bool(source.get("ok", False))
     detected = bool(source.get("detected", False))
 
-    if insp.detection_result is None and payload is None:
-        status_str = "not_run"
-    elif not ok:
-        status_str = "error"
-    else:
-        status_str = "detected" if detected else "no_cargo"
+    # ---- objects ---------------------------------------------------------
+    raw_objects = source.get("objects") or []
+    objects = []
+    for obj in raw_objects:
+        models = None
+        yolo_box = _to_rect(obj.get("yolo_box_px"))
+        sam_box = _to_rect(obj.get("sam_box_px"))
+        if yolo_box or sam_box:
+            models = ModelBoxes(yolo=yolo_box, sam=sam_box)
+        objects.append({
+            "label": obj.get("label", ""),
+            "yolo_confidence": float(obj.get("yolo_confidence") or 0),
+            "sam_score": float(obj.get("sam_score") or 0),
+            "mask_area_px": int(obj.get("mask_area_px") or 0),
+            "box": _to_rect(obj.get("box_px")),
+            "models": models,
+        })
 
-    has_overlay = bool(insp.detection_overlay) or bool(source.get("overlay"))
-    overlay_url = (
-        f"/portal/submissions/{insp.id}/detection/overlay" if has_overlay else None
-    )
-
-    return DetectionReport(
-        ok=ok,
+    # ---- data ------------------------------------------------------------
+    data = DetectionData(
         detected=detected,
-        status=status_str,
-        reason=source.get("reason"),
         label=source.get("label"),
-        score=source.get("score"),
-        object_count=int(source.get("object_count") or 0),
-        objects=source.get("objects") or [],
-        box_px=source.get("box_px"),
-        box_width_px=source.get("box_width_px"),
-        box_height_px=source.get("box_height_px"),
-        box_fraction_of_frame=source.get("box_fraction_of_frame"),
-        mask_area_ratio=source.get("mask_area_ratio"),
-        border_leak=source.get("border_leak"),
-        image_width=source.get("image_width"),
-        image_height=source.get("image_height"),
+        aggregate_score=source.get("score"),
+        objects=objects,
+        box=_to_rect(source.get("box_px")),
+        mask=MaskMetrics(
+            area_ratio=source.get("mask_area_ratio"),
+            border_leak=source.get("border_leak"),
+        ),
         detector_origin=source.get("detector_origin"),
         uses_zip_taxonomy=bool(source.get("uses_zip_taxonomy")),
         stage=source.get("stage") or "detection_and_segmentation",
-        error=source.get("error"),
         timed_out=bool(source.get("timed_out")),
-        elapsed_seconds=source.get("elapsed_seconds"),
-        has_overlay=has_overlay,
-        overlay_url=overlay_url,
-        detected_at=insp.detected_at,
-        inspection_id=insp.id,
     )
+
+    # ---- meta ------------------------------------------------------------
+    image = None
+    if source.get("image_width") and source.get("image_height"):
+        image = ImageContext(
+            width=int(source["image_width"]),
+            height=int(source["image_height"]),
+        )
+    links = None
+    if insp.detection_overlay or source.get("overlay"):
+        links = Links(
+            overlay=f"/portal/submissions/{insp.id}/detection/overlay"
+        )
+    meta = DetectionMeta(
+        inspection_id=insp.id,
+        detected_at=insp.detected_at,
+        elapsed_seconds=source.get("elapsed_seconds"),
+        image=image,
+        links=links,
+    )
+
+    return DetectionResponse(data=data, meta=meta)
 
 
 @router.get(
@@ -154,7 +217,7 @@ def detect_submission(
 
     **A refusal is a success.** An image with no cargo returns
     `"detected": false` with HTTP 200, because "nothing there" is a correct
-    answer. Only a broken detector produces `ok: false` or a non-200.
+    answer. Only a broken detector produces a non-200 error envelope.
 
     Re-running replaces the previous result rather than accumulating rows: a
     submission has at most one current detection, and `force=False` returns the
@@ -163,21 +226,15 @@ def detect_submission(
     insp = _load_owned(db, inspection_id, user)
 
     if insp.detection_result is not None and not force:
-        return _to_report(insp)
+        return _to_envelope(insp)
 
     usable, reason = detection.is_available()
     if not usable:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "message": reason,
-                "code": "detection_unavailable",
-                "hint": (
-                    "Set DETECTION_ENABLED=true in .env and point "
-                    "DETECTION_PYTHON / DETECTION_PROJECT_DIR at the detection "
-                    "project. See scripts/detect_runner.py."
-                ),
-            },
+        return _error_response(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Detection Unavailable",
+            reason,
+            "https://api.example.com/problems/detection-unavailable",
         )
 
     image_path = resolve_image_path(insp)
@@ -192,20 +249,22 @@ def detect_submission(
     try:
         run = detection.run_detection(image_path)
     except detection.DetectionTimeout as exc:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail={"message": str(exc), "code": "detection_timeout"},
-        ) from exc
+        return _error_response(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            "Detection Timeout",
+            str(exc),
+            "https://api.example.com/problems/detection-timeout",
+        )
     except detection.DetectionUnavailable as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"message": str(exc), "code": "detection_busy"},
-        ) from exc
+        return _error_response(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Detection Busy",
+            str(exc),
+            "https://api.example.com/problems/detection-busy",
+        )
 
     # Stored whether or not the run succeeded, so a failure is inspectable
-    # rather than a silently absent result. A timeout raised above and never
-    # reaches this point, which is deliberate: a killed run has no trustworthy
-    # numbers to keep.
+    # rather than a silently absent result.
     insp.detection_result = run.result
     insp.detected_at = datetime.now()
     insp.detection_overlay = detection.persist_overlay(run, insp.id)
@@ -217,19 +276,17 @@ def detect_submission(
     # other opportunity to bound its disk usage.
     detection.cleanup_runs(keep=20)
 
-    report = _to_report(insp, run.result, run=run)
-    if not report.ok:
-        # The run completed but failed. 200 would tell the caller the detection
-        # worked; it did not.
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={
-                "message": report.error or "The detector failed.",
-                "code": "detection_failed",
-                "report": report.model_dump(mode="json"),
-            },
+    response = _to_envelope(insp, run.result)
+    if not run.result.get("ok", False):
+        # The run completed but failed. 200 would tell the caller the
+        # detection worked; it did not.
+        return _error_response(
+            status.HTTP_502_BAD_GATEWAY,
+            "Detection Failed",
+            run.result.get("error") or "The detector failed.",
+            "https://api.example.com/problems/detection-failed",
         )
-    return report
+    return response
 
 
 @router.get(
@@ -241,13 +298,9 @@ def get_submission_detection(
     user: User = Depends(require_current_user),
     db: Session = Depends(get_db),
 ):
-    """The last run's report. Never starts a run.
-
-    Use `?include_log=true` when diagnosing a failure — the detector's stdout
-    tail carries the traceback, which the stored JSON does not.
-    """
+    """The last run's envelope. Never starts a run."""
     insp = _load_owned(db, inspection_id, user)
-    return _to_report(insp)
+    return _to_envelope(insp)
 
 
 @router.get(
@@ -261,11 +314,9 @@ def get_submission_detection_log(
 ):
     """Tail of the detector's console output for the most recent run.
 
-    The runner inherits stdout rather than capturing it, so a traceback exists
-    nowhere but the console. This returns the persisted copy, which is written
-    only when a run is killed — a completed run's diagnostics are already in
-    the report itself. An empty tail after `cleanup_runs` swept the directory is
-    expected, not an error.
+    Reads the run directory rather than the database, because the traceback
+    only ever existed on stdout. Returns an empty tail if the directory has
+    since been swept by `cleanup_runs`.
     """
     insp = _load_owned(db, inspection_id, user)
     run_dir = (insp.detection_result or {}).get("run_dir", "")
@@ -288,7 +339,7 @@ def get_submission_detection_overlay(
     """PNG with the segmented cargo masked in red and its box drawn.
 
     A refusal produces no overlay — CELL 10 draws no box when nothing passes
-    the acceptance gate — so this 404s for `status: "no_cargo"`.
+    the acceptance gate — so this 404s.
     """
     insp = _load_owned(db, inspection_id, user)
     if not insp.detection_overlay:

@@ -64,9 +64,9 @@ class TestRegistration:
             "password": "quay-crane-42",
         })
         assert r.status_code == 201, r.text
-        assert r.json()["user"]["email"] == "asha@example.com"
-        assert r.json()["user"]["inspection_count"] == 0
-        assert r.json()["user"]["has_password"] is True
+        assert r.json()["data"]["user"]["email"] == "asha@example.com"
+        assert r.json()["data"]["user"]["inspection_count"] == 0
+        assert r.json()["data"]["user"]["has_password"] is True
 
         # The cookie was set, so /me works straight after registering.
         assert client.get("/auth/me").status_code == 200
@@ -85,9 +85,9 @@ class TestRegistration:
             "name": "Short", "email": "short@example.com", "password": "123",
         })
         assert r.status_code == 422
-        # FastAPI returns a list of error objects for schema failures.
-        assert any("8 characters" in e.get("msg", "")
-                   for e in r.json()["detail"])
+        # RFC 9457: per-field failures land in `errors[]`.
+        assert any("8 characters" in e.get("message", "")
+                   for e in r.json()["errors"])
 
     def test_duplicate_email_is_409(self, client):
         client.post("/auth/register", json={
@@ -183,7 +183,7 @@ class TestSession:
         r = client.get("/auth/me")
         assert r.status_code == 200
         # /auth/me wraps the user so the UI can also read the permission list.
-        body = r.json()
+        body = r.json()["data"]
         assert body["user"]["email"] == "me@example.com"
         assert body["is_admin"] is False
         assert "submissions:create" in body["permissions"]
@@ -243,17 +243,17 @@ class TestPortalIsolation:
                         files={"image": ("b.png", png_bytes(), "image/png")})
         assert b.status_code == 201
 
-        return a.json()["id"], b.json()["id"]
+        return a.json()["data"]["id"], b.json()["data"]["id"]
 
     def test_list_shows_only_my_own(self, client, two_users):
         a_id, b_id = two_users
         r = client.get("/portal/submissions")
         assert r.status_code == 200
-        ids = {i["id"] for i in r.json()["items"]}
+        ids = {i["id"] for i in r.json()["data"]}
         assert ids == {b_id}, "Bob must not see Asha's submission"
 
     def test_total_is_scoped_too(self, client, two_users):
-        assert client.get("/portal/submissions").json()["total"] == 1
+        assert client.get("/portal/submissions").json()["meta"]["pagination"]["total"] == 1
 
     def test_cannot_read_another_users_submission(self, client, two_users):
         a_id, _ = two_users
@@ -268,7 +268,7 @@ class TestPortalIsolation:
         _, b_id = two_users
         r = client.get(f"/portal/submissions/{b_id}")
         assert r.status_code == 200
-        assert r.json()["name"] == "Bob"
+        assert r.json()["data"]["name"] == "Bob"
 
     def test_user_id_filter_cannot_be_forced(self, client, two_users):
         """Passing another user's id as a filter must not widen the result."""
@@ -276,10 +276,10 @@ class TestPortalIsolation:
         r = client.get(f"/portal/submissions?user_id={a_id}")
         assert r.status_code in (200, 422)
         if r.status_code == 200:
-            assert {i["id"] for i in r.json()["items"]} == {b_id}
+            assert {i["id"] for i in r.json()["data"]} == {b_id}
 
     def test_summary_is_scoped(self, client, two_users):
-        assert client.get("/portal/summary").json()["total"] == 1
+        assert client.get("/portal/summary").json()["data"]["total"] == 1
 
 
 class TestPortalPagination:
@@ -295,29 +295,29 @@ class TestPortalPagination:
         return client
 
     def test_envelope_counts(self, seeded_user):
-        r = seeded_user.get("/portal/submissions?limit=3").json()
-        assert r["total"] == 7
-        assert r["limit"] == 3
-        assert r["pages"] == 3
-        assert len(r["items"]) == 3
+        r = seeded_user.get("/portal/submissions?per_page=3").json()
+        assert r["meta"]["pagination"]["total"] == 7
+        assert r["meta"]["pagination"]["per_page"] == 3
+        assert r["meta"]["pagination"]["total_pages"] == 3
+        assert len(r["data"]) == 3
 
     def test_pages_cover_everything_without_overlap(self, seeded_user):
         seen = []
-        for p in range(3):
-            r = seeded_user.get(f"/portal/submissions?skip={p*3}&limit=3&sort=id").json()
-            seen += [i["id"] for i in r["items"]]
+        for p in range(1, 4):
+            r = seeded_user.get(f"/portal/submissions?page={p}&per_page=3&sort=id").json()
+            seen += [i["id"] for i in r["data"]]
         assert len(seen) == 7
         assert len(set(seen)) == 7, "a row appeared on two pages"
 
     def test_out_of_range_page_is_empty_not_an_error(self, seeded_user):
-        r = seeded_user.get("/portal/submissions?skip=99&limit=3")
+        r = seeded_user.get("/portal/submissions?page=99&per_page=3")
         assert r.status_code == 200
-        assert r.json()["items"] == []
+        assert r.json()["data"] == []
 
     def test_invalid_page_params_are_422(self, seeded_user):
-        assert seeded_user.get("/portal/submissions?limit=0").status_code == 422
-        assert seeded_user.get("/portal/submissions?skip=-1").status_code == 422
-        assert seeded_user.get("/portal/submissions?limit=9999").status_code == 422
+        assert seeded_user.get("/portal/submissions?per_page=0").status_code == 422
+        assert seeded_user.get("/portal/submissions?page=0").status_code == 422
+        assert seeded_user.get("/portal/submissions?per_page=9999").status_code == 422
 
 
 class TestPortalUpload:
@@ -329,13 +329,13 @@ class TestPortalUpload:
                               "tags": "urgent, portal"},
                         files={"image": ("u.png", png_bytes(8, 8), "image/png")})
         assert r.status_code == 201
-        assert r.json()["cargo_type"] == "thermal-coal"
-        assert {t["name"] for t in r.json()["tags"]} == {"urgent", "portal"}
+        assert r.json()["data"]["cargo_type"] == "thermal-coal"
+        assert {t["name"] for t in r.json()["data"]["tags"]} == {"urgent", "portal"}
 
         # It appears in the list straight away.
         listed = client.get("/portal/submissions").json()
-        assert listed["total"] == 1
-        assert listed["items"][0]["id"] == r.json()["id"]
+        assert listed["meta"]["pagination"]["total"] == 1
+        assert listed["data"][0]["id"] == r.json()["data"]["id"]
 
     def test_details_come_from_the_account_not_the_form(self, client, png_bytes):
         """The portal form cannot spoof who submitted."""
@@ -346,8 +346,8 @@ class TestPortalUpload:
                         data={"cargo_type": "other", "name": "Someone Else",
                               "email": "spoof@example.com"},
                         files={"image": ("u.png", png_bytes(), "image/png")})
-        assert r.json()["name"] == "Real Name"
-        assert r.json()["email"] == "real@example.com"
+        assert r.json()["data"]["name"] == "Real Name"
+        assert r.json()["data"]["email"] == "real@example.com"
 
     def test_missing_cargo_type_is_422(self, client, png_bytes):
         client.post("/auth/register", json={
@@ -369,8 +369,8 @@ class TestPortalUpload:
             files={"image": ("a.png", png_bytes(), "image/png")},
             headers={"Idempotency-Key": "portal-abc"},
         )
-        assert second.json()["id"] == first.json()["id"]
-        assert client.get("/portal/submissions").json()["total"] == 1
+        assert second.json()["data"]["id"] == first.json()["data"]["id"]
+        assert client.get("/portal/submissions").json()["meta"]["pagination"]["total"] == 1
 
     def test_bad_file_type_is_400(self, client, png_bytes):
         client.post("/auth/register", json={
