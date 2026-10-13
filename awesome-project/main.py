@@ -62,6 +62,7 @@ from routers.auth import router as auth_router  # noqa: E402
 from routers.detection import router as detection_router  # noqa: E402
 from routers.health import router as health_router  # noqa: E402
 from routers.inspection import portal as portal_router  # noqa: E402
+from routers.lifting_plan import router as lifting_plan_router  # noqa: E402
 from services.security import bearer_scheme  # noqa: E402
 
 #: Attached to every authenticated router so OpenAPI marks those operations as
@@ -78,6 +79,8 @@ app.include_router(auth_router)
 app.include_router(portal_router, dependencies=authed)
 # Detection: runs on the caller's own submissions
 app.include_router(detection_router, dependencies=authed)
+# Lifting plan: one Markdown document per submission, no persistence
+app.include_router(lifting_plan_router, dependencies=authed)
 # Admin: review workflow + user management (cross-user, requires admin role)
 app.include_router(admin_router, dependencies=authed)
 # Health checks
