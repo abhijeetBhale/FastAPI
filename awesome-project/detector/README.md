@@ -28,6 +28,13 @@ Then re-run the contract tests — `TestRunnerContract` in
 .venv\Scripts\python.exe -m pytest tests/test_detection.py::TestRunnerContract -q
 ```
 
+## Weights changelog
+
+| Date | Weights | Change |
+|---|---|---|
+| 2026-10-13 | retrain `cargo_obb_retrain_ship1` (25 epochs from previous best) | +1 train sample: red-bagged ship load (`Cargo-Box`) + yellow crane housing (`Crane`). Backup of the previous best: `cargo_obb_best.pre_retrain_ship1.pt` in the detection project's `models/`. Effect on the ship image: second FP gone, main FP 0.80→0.76 / 15.2→14.3, true load still missed — one sample was not enough (see below). |
+| 2026-10-13 | retrain `cargo_obb_retrain_batch2` (25 epochs, best epoch 7, overall val mAP50 0.502 — best to date) | +4 train scenes from existing PoC stock (hand-labeled this session, ±5%): lattice-boom crane + box (`crane_box_net_u9P4`), red gantry + barrel load (`port_yellow_net_kqWnu`), white sacks + blue cab (`ship_white_sacks_8GR`), dock sack piles (`dock_sacks_worker_AfaW`). Backup: `cargo_obb_best.pre_retrain_batch2.pt`. Effect on the ship image: crane FP confidence ROSE 0.76→0.84 / score 14.3→16.5, true load still missed — data path exhausted for this scene; see structural note. |
+
 ## What is deliberately NOT vendored
 
 - **The `_build/cell*.py` sources.** They have diverged from the notebook
