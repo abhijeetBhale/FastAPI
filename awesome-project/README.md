@@ -457,6 +457,10 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/portal/detection/availability -We
 
 # run it — blocks 16-45 s on CPU
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/portal/submissions/16/detect -WebSession $s
+
+# re-run even though a result exists (the option is a body field)
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/portal/submissions/16/detect `
+    -ContentType "application/json" -Body '{"force": true}' -WebSession $s
 ```
 
 The pipeline (SAM ViT-B + a cargo-tuned YOLO-OBB detector) lives in a separate
@@ -468,7 +472,7 @@ sides meet at a JSON file.
 | Endpoint | Who | Purpose |
 |---|---|---|
 | `GET /api/v1/portal/detection/availability` | user | Whether the detector can run, and why not |
-| `POST /api/v1/portal/submissions/{id}/detect` | owner | Run detection (cached; `?force=true` to re-run) |
+| `POST /api/v1/portal/submissions/{id}/detect` | owner | Run detection; cached, `{"force": true}` in the body to re-run |
 | `GET /api/v1/portal/submissions/{id}/detection` | owner | Last stored result |
 | `GET /api/v1/portal/submissions/{id}/detection/overlay` | owner | Annotated PNG |
 | `GET /api/v1/admin/submissions/{id}/detection` | admin | Any result, read-only |

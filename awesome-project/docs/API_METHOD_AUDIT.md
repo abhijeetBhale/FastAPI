@@ -4,14 +4,23 @@
 or are some of them arbitrary?
 
 **Answer:** no operation had a random verb. Of the 44 operations, 27 are reads
-and all are `GET`; of the 17 mutations, 14 used the right method and carried
-their payload correctly. **Three defects** surfaced, all in the admin surface:
+and all are `GET`; of the 17 mutations, every one used the right method for its
+work — but **three of them carried their input in the query string**, which §5
+reserves for `GET`, and one response header was incomplete. Four defects in
+total, across `/admin` and `/portal`:
 
 | Defect | Kind | Operations affected |
 |---|---|---|
 | A role change was `POST` on a `/role` sub-path | wrong method | 1 |
 | Approve/reject read their note from `?note=` (the UI sent a body — the note was dropped) | right method, payload in the wrong place | 2 |
+| `detect` read `?force=` from the query string | right method, payload in the wrong place | 1 |
 | A `405` listed only one method in `Allow` | wrong response contract, not wrong routing | — (header only) |
+
+No defect was a *wrong verb* except the role endpoint; the rest were the right
+verb with its input in the wrong place — which is why they all failed silently
+(the payload was optional, so the parameter was simply ignored rather than
+rejected). The query-string class is now asserted off the served schema, so it
+cannot come back in a new endpoint.
 
 Everything below was measured against `docs/API_CONVENTIONS.md` §5 and against
 the code, then pinned by `tests/test_api_contract.py`.
@@ -89,7 +98,7 @@ Now: `PATCH /api/v1/admin/users/{id}` with `{"role": "admin"}`, validated by
 than a hand-rolled check). The `users:manage` permission, the self-demotion 400
 and the `set_role` audit action are unchanged.
 
-### 3.2 `POST …/approve` and `…/reject` read the note from `?note=`
+### 3.2 `POST …/approve`, `…/reject` (`?note=`) and `POST …/detect` (`?force=`)
 
 The method was right (a state transition is a POST action). The **payload
 location was wrong**, and it was actively losing data: the admin UI sent
@@ -101,6 +110,12 @@ Now the note is read from the JSON body (`DecisionRequest`), matching the batch
 form `BulkDecisionRequest` that already worked. A test asserts the note reaches
 `status_note` **and** the `audit_log` entry, because the audit trail is the
 reason the note exists.
+
+`detect` had the same shape with `?force=true`: a mutation option in the query
+string. It is now `{"force": true}` in the body (`DetectRequest`). Both bodies
+are optional, so a body-less `POST` still works — which is why neither bug was
+ever noticed: the input was optional, so the failure mode was "the option is
+silently ignored", not an error.
 
 ### 3.3 A `405` reported an incomplete `Allow` header
 
@@ -143,3 +158,5 @@ odd verb unnoticed:
 2. `DELETE` only targets an id or a named destructive action (`purge`).
 3. `POST` either creates into a collection that can be read back with `GET`, or
    its last segment names the action (`detect`, `approve`, `restore`, …).
+4. No non-`GET` operation declares a query parameter — asserted directly
+   against the served OpenAPI document.

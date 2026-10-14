@@ -239,6 +239,30 @@ class TestMethodMatchesTheWork:
             offenders.append(path)
         assert not offenders, f"POST with no create/action meaning: {offenders}"
 
+    def test_no_mutation_takes_its_input_from_the_query_string(self, client):
+        """§5: query parameters are for `GET` filtering/sorting/pagination.
+
+        Two endpoints shipped this bug and both were silent, because the input
+        was optional: `?note=` on approve/reject (the UI sent a body, so notes
+        vanished) and `?force=` on detect. The rule is asserted directly off the
+        served schema, so a third cannot appear unnoticed.
+        """
+        offenders = {}
+        for path, ops in client.get("/openapi.json").json()["paths"].items():
+            for method, op in ops.items():
+                if method in SAFE_METHODS or not isinstance(op, dict):
+                    continue
+                query = [
+                    p["name"] for p in op.get("parameters", [])
+                    if p.get("in") == "query"
+                ]
+                if query:
+                    offenders[f"{method.upper()} {path}"] = query
+        assert not offenders, (
+            f"mutations reading the query string: {offenders} — "
+            "move the input into the request body"
+        )
+
     def test_no_read_endpoint_is_a_mutation(self, live_paths):
         """`GET` must be safe. Every mutation path must also offer a mutating
         method somewhere else — i.e. mutations are not reachable by GET alone."""

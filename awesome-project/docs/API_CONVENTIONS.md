@@ -635,6 +635,17 @@ Image bytes. `Content-Type` from stored metadata.
 
 Run detection. Blocks 16–45 s. Returns the detection envelope (see §7.3).
 
+**Request** (`application/json`, optional):
+
+```json
+{ "force": true }
+```
+
+`force` re-runs even when a stored result exists — needed after the detector or
+its weights change. It is a *body* field, not `?force=`: §5 keeps query
+parameters for `GET`, and this is a mutation's only input. The body is optional,
+so a bare `POST` runs (or returns the cached) detection.
+
 **Error 502**:
 
 ```json
@@ -1997,9 +2008,13 @@ paths:
 
         Re-running replaces the previous result rather than accumulating rows: a
 
-        submission has at most one current detection, and `force=False` returns the
+        submission has at most one current detection, and `force=false` returns the
 
-        existing one instead of burning 30 s of CPU to recompute it.'
+        existing one instead of burning 30 s of CPU to recompute it. The option
+
+        comes from the JSON body (`DetectRequest`), never `?force=` — §5 keeps
+
+        query strings for GET, and a body-less call still works.'
       operationId: detect_submission_api_v1_portal_submissions__inspection_id__detect_post
       security:
       - HTTPBearer: []
@@ -2010,17 +2025,6 @@ paths:
         schema:
           type: integer
           title: Inspection Id
-      - name: force
-        in: query
-        required: false
-        schema:
-          type: boolean
-          description: Re-run even if a result already exists. Useful after the detector or
-            its weights change.
-          default: false
-          title: Force
-        description: Re-run even if a result already exists. Useful after the detector or
-          its weights change.
       - name: session_token
         in: cookie
         required: false
@@ -2029,6 +2033,14 @@ paths:
           - type: string
           - type: 'null'
           title: Session Token
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/DetectRequest'
+              - type: 'null'
+              title: Data
       responses:
         '200':
           description: Successful Response
@@ -3415,6 +3427,31 @@ components:
         admin UI was already sending `{"note": …}` in the body, so a query-only
 
         parameter silently discarded it.'
+    DetectRequest:
+      properties:
+        force:
+          type: boolean
+          title: Force
+          default: false
+      type: object
+      title: DetectRequest
+      description: 'Options for one detection run — `POST /…/submissions/{id}/detect`.
+
+
+        A JSON body rather than `?force=true`: §5 of `docs/API_CONVENTIONS.md`
+
+        reserves query parameters for `GET` filtering/sorting/pagination, and this
+
+        is a mutation''s input. It was the last endpoint still taking one from the
+
+        query string (`?note=` was fixed the same way), and
+
+        `tests/test_api_contract.py` now fails if a new one appears.
+
+
+        The whole body is optional: detection with no options is the common case,
+
+        so a body-less `POST` must keep working.'
     HTTPValidationError:
       properties:
         detail:

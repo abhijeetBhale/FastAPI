@@ -391,11 +391,25 @@ class TestDetect:
         assert len(calls) == 1
 
     def test_force_reruns(self, client, submission, fake_run, enabled):
-        """Needed after the weights or the notebook change."""
+        """Needed after the weights or the notebook change.
+
+        `force` is a body field, not `?force=`: a mutation's input belongs in
+        the body (§5). See `tests/test_api_contract.py` for the rule.
+        """
         calls = fake_run()
         client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
-        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect?force=true")
+        client.post(
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detect",
+            json={"force": True},
+        )
         assert len(calls) == 2
+
+    def test_force_can_be_omitted_entirely(self, client, submission, fake_run, enabled):
+        """The body is optional, so a bare POST still runs detection."""
+        calls = fake_run()
+        r = client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
+        assert r.status_code == 200, r.text
+        assert len(calls) == 1
 
     def test_a_timeout_is_504(self, client, submission, monkeypatch, enabled):
         def boom(image_path, **kwargs):

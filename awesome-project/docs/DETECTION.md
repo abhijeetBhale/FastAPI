@@ -235,11 +235,13 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/portal/submissions/16/detection -
 ### Caching
 
 A second `POST` returns the stored result instantly instead of spending another
-30 s. Pass `?force=true` to re-run — needed after the weights or the notebook
-change:
+30 s. Send `{"force": true}` in the body to re-run — needed after the weights or
+the notebook change. (A body field, not `?force=`: query parameters are for
+`GET`; see `docs/API_CONVENTIONS.md` §5.)
 
 ```powershell
-Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/portal/submissions/16/detect?force=true" -WebSession $s
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/portal/submissions/16/detect" `
+    -ContentType "application/json" -Body '{"force": true}' -WebSession $s
 ```
 
 ---
@@ -347,7 +349,7 @@ from reading any file the app can.
 - `no_cargo` vs `not_run`
 - `volume_m3` staying null
 - path traversal on overlays and logs
-- caching, `force=true`, timeout, busy, missing image file
+- caching, `force` in the body, timeout, busy, missing image file
 - **the subprocess contract** — `TestRunnerContract` asserts the runner exists,
   reads `CARGO_PROJECT_DIR`, runs *only* cells 7–10, and still parses the log.
   If a notebook edit breaks that contract, these fail before anyone waits 30 s

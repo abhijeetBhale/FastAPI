@@ -24,8 +24,9 @@ Response envelope (see `schemas/responses/detection.py`):
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
@@ -35,6 +36,7 @@ from database import get_db, utcnow
 from errors import problem
 from models.inspection import Inspection
 from models.user import User
+from schemas.requests.detection import DetectRequest
 from schemas.responses.detection import (
     DetectionAvailability,
     DetectionData,
@@ -205,13 +207,7 @@ def detection_availability(
 )
 def detect_submission(
     inspection_id: int,
-    force: bool = Query(
-        default=False,
-        description=(
-            "Re-run even if a result already exists. Useful after the detector "
-            "or its weights change."
-        ),
-    ),
+    data: Optional[DetectRequest] = None,
     user: User = Depends(require_current_user),
     db: Session = Depends(get_db),
 ):
@@ -226,9 +222,12 @@ def detect_submission(
     answer. Only a broken detector produces a non-200 error envelope.
 
     Re-running replaces the previous result rather than accumulating rows: a
-    submission has at most one current detection, and `force=False` returns the
-    existing one instead of burning 30 s of CPU to recompute it.
+    submission has at most one current detection, and `force=false` returns the
+    existing one instead of burning 30 s of CPU to recompute it. The option
+    comes from the JSON body (`DetectRequest`), never `?force=` — §5 keeps
+    query strings for GET, and a body-less call still works.
     """
+    force = bool(data.force) if data else False
     insp = _load_owned(db, inspection_id, user)
 
     if insp.detection_result is not None and not force:
