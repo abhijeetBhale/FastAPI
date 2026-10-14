@@ -18,17 +18,21 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
+from api import API_PREFIX
 from errors import problem
 from models.user import User
 from services.rbac import Role, _coerce_role
 
 logger = logging.getLogger("app.rbac")
 
-#: Prefixes restricted to the admin role.
-ADMIN_PREFIXES: tuple[str, ...] = ("/admin",)
+#: Prefixes restricted to the admin role. Same lockstep requirement as
+#: `middlewares/auth.PROTECTED_PREFIXES`: a prefix that does not match the
+#: routes is a gate that never opens.
+ADMIN_PREFIXES: tuple[str, ...] = (f"{API_PREFIX}/admin",)
 
 
 def is_admin_path(path: str) -> bool:
+    """Segment-aware, so `/api/v1/administer` is not treated as admin-only."""
     return any(path == p or path.startswith(p + "/") for p in ADMIN_PREFIXES)
 
 

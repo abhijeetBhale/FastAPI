@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import pytest
 
+from api import API_PREFIX
+
 
 def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
@@ -45,13 +47,13 @@ class TestOpenAPISpec:
     @pytest.mark.parametrize(
         "path",
         [
-            "/portal/submissions",
-            "/portal/summary",
-            "/portal/cargo-types",
-            "/admin/submissions",
-            "/admin/stats",
-            "/admin/audit",
-            "/admin/users",
+            API_PREFIX + "/portal/submissions",
+            API_PREFIX + "/portal/summary",
+            API_PREFIX + "/portal/cargo-types",
+            API_PREFIX + "/admin/submissions",
+            API_PREFIX + "/admin/stats",
+            API_PREFIX + "/admin/audit",
+            API_PREFIX + "/admin/users",
         ],
     )
     def test_protected_operations_declare_security(self, client, path):
@@ -62,7 +64,7 @@ class TestOpenAPISpec:
                      ("get", "post", "put", "patch", "delete") and not op.get("security")]
         assert not unsecured, f"{path}: {unsecured} declare no security requirement"
 
-    @pytest.mark.parametrize("path", ["/auth/login", "/auth/register", "/health"])
+    @pytest.mark.parametrize("path", [API_PREFIX + "/auth/login", API_PREFIX + "/auth/register", "/health"])
     def test_public_operations_are_not_marked(self, client, path):
         """Marking /auth/login as secured makes the docs demand a token you
         cannot obtain yet â€” an obvious dead end for a first-time reader."""
@@ -78,14 +80,14 @@ class TestBearerAuthenticates:
     """The whole point: a token pasted into Swagger must behave like the cookie."""
 
     def test_bearer_token_authenticates_a_portal_route(self, client):
-        r = client.post("/auth/register", json={"name": "Docs", "email": "docs@x.com",
+        r = client.post(API_PREFIX + "/auth/register", json={"name": "Docs", "email": "docs@x.com",
                                                 "password": "quay-crane-42"})
         assert r.status_code == 201
         token = client.cookies.get("session_token")
 
         # Exactly what Swagger does: drop the cookie, send only the header.
         client.cookies.clear()
-        me = client.get("/auth/me", headers=bearer(token))
+        me = client.get(API_PREFIX + "/auth/me", headers=bearer(token))
         assert me.status_code == 200
         assert me.json()["data"]["user"]["email"] == "docs@x.com"
 
@@ -93,20 +95,20 @@ class TestBearerAuthenticates:
         """The bug this guards: the middleware runs before routing, so a valid
         bearer token used to be rejected there with 401 while the dependency
         that would have accepted it was never reached."""
-        client.post("/auth/register", json={"name": "Docs2", "email": "docs2@x.com",
+        client.post(API_PREFIX + "/auth/register", json={"name": "Docs2", "email": "docs2@x.com",
                                             "password": "quay-crane-42"})
         token = client.cookies.get("session_token")
         client.cookies.clear()
 
-        # /portal is gated by AuthenticationMiddleware before routing happens.
-        r = client.get("/portal/submissions", headers=bearer(token))
+        # The portal group is gated by AuthenticationMiddleware before routing.
+        r = client.get(API_PREFIX + "/portal/submissions", headers=bearer(token))
         assert r.status_code == 200, r.text
 
     def test_bearer_token_reaches_the_rbac_gate(self, client, db):
         """Same reasoning for /admin, which adds a role check on top."""
         from models.user import User
 
-        client.post("/auth/register", json={"name": "DocsBoss", "email": "boss@x.com",
+        client.post(API_PREFIX + "/auth/register", json={"name": "DocsBoss", "email": "boss@x.com",
                                             "password": "quay-crane-42"})
         u = db.query(User).filter(User.email == "boss@x.com").one()
         u.role = "admin"
@@ -114,7 +116,7 @@ class TestBearerAuthenticates:
 
         token = client.cookies.get("session_token")
         client.cookies.clear()
-        r = client.get("/admin/submissions", headers=bearer(token))
+        r = client.get(API_PREFIX + "/admin/submissions", headers=bearer(token))
         assert r.status_code == 200, r.text
 
     def test_bearer_does_not_bypass_ownership(self, client, db):
@@ -122,7 +124,7 @@ class TestBearerAuthenticates:
         nothing, so another's submission is still a 404 â€” not a 200."""
         from models.user import User
 
-        client.post("/auth/register", json={"name": "Owner", "email": "owner@x.com",
+        client.post(API_PREFIX + "/auth/register", json={"name": "Owner", "email": "owner@x.com",
                                             "password": "quay-crane-42"})
         import struct, zlib
 
@@ -136,46 +138,46 @@ class TestBearerAuthenticates:
                + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
                + chunk(b"IDAT", zlib.compress(raw))
                + chunk(b"IEND", b""))
-        owned = client.post("/portal/submissions", data={"cargo_type": "scrap-steel"},
+        owned = client.post(API_PREFIX + "/portal/submissions", data={"cargo_type": "scrap-steel"},
                             files={"image": ("o.png", png, "image/png")}).json()["data"]
         owner_token = client.cookies.get("session_token")
 
-        client.post("/auth/logout")
+        client.post(API_PREFIX + "/auth/logout")
         client.cookies.clear()
-        client.post("/auth/register", json={"name": "Snoop", "email": "snoop@x.com",
+        client.post(API_PREFIX + "/auth/register", json={"name": "Snoop", "email": "snoop@x.com",
                                             "password": "quay-crane-42"})
         snoop_token = client.cookies.get("session_token")
 
-        r = client.get(f"/portal/submissions/{owned['id']}",
+        r = client.get(f"{API_PREFIX}/portal/submissions/{owned['id']}",
                        headers=bearer(snoop_token))
         assert r.status_code == 404, r.text
 
     def test_missing_credential_is_still_401(self, client):
         client.cookies.clear()
-        assert client.get("/auth/me").status_code == 401
-        assert client.get("/portal/submissions").status_code == 401
+        assert client.get(API_PREFIX + "/auth/me").status_code == 401
+        assert client.get(API_PREFIX + "/portal/submissions").status_code == 401
 
     def test_a_forged_bearer_token_is_rejected(self, client):
         client.cookies.clear()
-        r = client.get("/auth/me", headers=bearer("not.a.jwt"))
+        r = client.get(API_PREFIX + "/auth/me", headers=bearer("not.a.jwt"))
         assert r.status_code == 401
 
     def test_a_non_bearer_scheme_is_ignored(self, client):
         """`Basic <jwt>` is not a bearer token and must not be accepted."""
-        client.post("/auth/register", json={"name": "Schemes", "email": "s@x.com",
+        client.post(API_PREFIX + "/auth/register", json={"name": "Schemes", "email": "s@x.com",
                                             "password": "quay-crane-42"})
         token = client.cookies.get("session_token")
         client.cookies.clear()
-        r = client.get("/auth/me", headers={"Authorization": f"Basic {token}"})
+        r = client.get(API_PREFIX + "/auth/me", headers={"Authorization": f"Basic {token}"})
         assert r.status_code == 401
 
     def test_the_cookie_still_wins_over_the_header(self, client):
         """Cookie is checked first, so a stale Authorization header from some
         proxy cannot displace a valid browser session."""
-        client.post("/auth/register", json={"name": "Prefer", "email": "pref@x.com",
+        client.post(API_PREFIX + "/auth/register", json={"name": "Prefer", "email": "pref@x.com",
                                             "password": "quay-crane-42"})
         token = client.cookies.get("session_token")
         # Cookie present and valid; header carries a different (bogus) token.
-        r = client.get("/auth/me", headers=bearer("garbage.token.here"))
+        r = client.get(API_PREFIX + "/auth/me", headers=bearer("garbage.token.here"))
         assert r.status_code == 200
         assert r.json()["data"]["user"]["email"] == "pref@x.com"

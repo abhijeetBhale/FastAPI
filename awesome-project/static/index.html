@@ -289,6 +289,9 @@
 </div>
 
 <script>
+// Every API route lives under this versioned base path (see api.py). One
+// constant, so a future /api/v2 is a one-line change here.
+const API = "/api/v1";
 const $ = id => document.getElementById(id);
 let me = null, cargoTypes = [], picked = null, page = 0, pageSize = 6;
 let registerMode = false;
@@ -298,7 +301,7 @@ let adminPage = 0;
 const selected = new Set();
 
 async function refreshAdmin() {
-  const r = await fetch("/admin/stats");
+  const r = await fetch(API + "/admin/stats");
   if (r.status === 403) { showAuth(); return; }
   if (!r.ok) return;
   const d = await r.json();
@@ -312,7 +315,7 @@ async function refreshAdmin() {
   if (q) params.set("search", q);
   if (st) params.set("status", st);
 
-  const lr = await fetch("/admin/submissions?" + params);
+  const lr = await fetch(API + "/admin/submissions?" + params);
   if (lr.status === 401) { showAuth(); return; }
   const list = await lr.json();
 
@@ -327,10 +330,13 @@ async function refreshAdmin() {
     : `<div class="empty"><div class="glyph">&#128203;</div><h3>Nothing here</h3>
        <p>No submissions match this filter.</p></div>`;
 
+  // Note the buttons carry only the submission id (`data-ok`/`data-no`); the
+  // note is optional and the body is `{}` when there is none. The server reads
+  // it from the JSON body (see `DecisionRequest`), not a query param.
   $("adminHost").querySelectorAll("[data-ok]").forEach(b =>
-    b.addEventListener("click", () => decide(b.dataset.ok, "approve", b.dataset.id)));
+    b.addEventListener("click", () => decide(b.dataset.ok, "approve")));
   $("adminHost").querySelectorAll("[data-no]").forEach(b =>
-    b.addEventListener("click", () => decide(b.dataset.no, "reject", b.dataset.id)));
+    b.addEventListener("click", () => decide(b.dataset.no, "reject")));
   $("adminHost").querySelectorAll("[data-chk]").forEach(c =>
     c.addEventListener("change", () => {
       const id = Number(c.dataset.chk);
@@ -395,7 +401,7 @@ function renderBulkBar() {
 }
 
 async function decide(id, action, note) {
-  const r = await fetch(`/admin/submissions/${id}/${action}`, {
+  const r = await fetch(`${API}/admin/submissions/${id}/${action}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(note ? { note } : {}),
@@ -410,7 +416,7 @@ async function decide(id, action, note) {
 
 $("bulkApprove").addEventListener("click", async () => {
   if (!selected.size) return;
-  const r = await fetch("/admin/submissions/bulk", {
+  const r = await fetch(API + "/admin/submissions/bulk", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids: [...selected], action: "approve" }),
   });
@@ -423,7 +429,7 @@ $("bulkApprove").addEventListener("click", async () => {
 $("bulkReject").addEventListener("click", async () => {
   if (!selected.size) return;
   if (!confirm(`Reject ${selected.size} submission(s)?`)) return;
-  const r = await fetch("/admin/submissions/bulk", {
+  const r = await fetch(API + "/admin/submissions/bulk", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids: [...selected], action: "reject" }),
   });
@@ -467,7 +473,7 @@ function errBox(id, msg) {
 
 async function boot() {
   try {
-    const r = await fetch("/auth/me");
+    const r = await fetch(API + "/auth/me");
     if (r.ok) {
       const d = await r.json();
       me = d.user;
@@ -522,7 +528,7 @@ $("authSubmit").addEventListener("click", async () => {
     ? { name: $("aName").value.trim(), email, phone: $("aPhone").value.trim() || null, password: pass }
     : { email, password: pass };
 
-  const url = registerMode ? "/auth/register" : "/auth/login";
+  const url = registerMode ? API + "/auth/register" : API + "/auth/login";
   const btn = $("authSubmit");
   btn.disabled = true; errBox("authErr", "");
   try {
@@ -544,7 +550,7 @@ $("authSubmit").addEventListener("click", async () => {
 });
 
 $("logoutBtn").addEventListener("click", async () => {
-  await fetch("/auth/logout", { method: "POST" });
+  await fetch(API + "/auth/logout", { method: "POST" });
   me = null; picked = null;
   setMode(false);
   $("aEmail").value = "";
@@ -554,7 +560,7 @@ $("logoutBtn").addEventListener("click", async () => {
 /* ---------------- lookups ---------------- */
 async function loadCargoTypes() {
   try {
-    const r = await fetch("/portal/cargo-types");
+    const r = await fetch(API + "/portal/cargo-types");
     cargoTypes = await r.json();
   } catch { cargoTypes = []; }
 
@@ -566,7 +572,7 @@ async function loadCargoTypes() {
 }
 
 async function refreshStats() {
-  const r = await fetch("/portal/summary");
+  const r = await fetch(API + "/portal/summary");
   if (!r.ok) return;
   const d = await r.json();
   const s = d.stats;
@@ -585,7 +591,7 @@ async function refresh() {
   if (q) params.set("search", q);
   if (c) params.set("cargo_type", c);
 
-  const r = await fetch("/portal/submissions?" + params);
+  const r = await fetch(API + "/portal/submissions?" + params);
   if (r.status === 401) { showAuth(); return; }
   const d = await r.json();
 
@@ -674,7 +680,7 @@ $("fCargo").addEventListener("change", () => { page = 0; refresh(); });
 
 async function withdraw(id) {
   if (!confirm("Withdraw this submission? It stays in the audit trail.")) return;
-  const r = await fetch(`/portal/submissions/${id}`, { method: "DELETE" });
+  const r = await fetch(`${API}/portal/submissions/${id}`, { method: "DELETE" });
   if (!r.ok) {
     const d = await r.json();
     alert(d.detail || "Could not withdraw.");
@@ -751,7 +757,7 @@ $("uploadBtn").addEventListener("click", async () => {
   errBox("upErr", "");
 
   try {
-    const r = await fetch("/portal/submissions", {
+    const r = await fetch(API + "/portal/submissions", {
       method: "POST", body: form, headers: { "Idempotency-Key": key },
     });
     const d = await r.json();
@@ -782,7 +788,7 @@ $("uploadBtn").addEventListener("click", async () => {
 /* Portal cards read images through the owner-scoped route; the plain
    /inspections/{id}/image route is admin-only. */
 function ownerImage(i) {
-  return `/portal/submissions/${i.id}/image`;
+  return `${API}/portal/submissions/${i.id}/image`;
 }
 
 function escapeHtml(s) {

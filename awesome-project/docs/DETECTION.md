@@ -193,26 +193,26 @@ letting it corrupt the first.
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
-| `GET` | `/portal/detection/availability` | user | Can the detector run? Why not? |
-| `POST` | `/portal/submissions/{id}/detect` | owner | **Run** detection (blocks 16–45 s) |
-| `GET` | `/portal/submissions/{id}/detection` | owner | Last stored result |
-| `GET` | `/portal/submissions/{id}/detection/log` | owner | stdout tail, for a failed run |
-| `GET` | `/portal/submissions/{id}/detection/overlay` | owner | Annotated PNG |
-| `GET` | `/admin/submissions/{id}/detection` | admin | Any result (read-only) |
-| `GET` | `/admin/submissions/{id}/detection/overlay` | admin | Any overlay |
+| `GET` | `/api/v1/portal/detection/availability` | user | Can the detector run? Why not? |
+| `POST` | `/api/v1/portal/submissions/{id}/detect` | owner | **Run** detection (blocks 16–45 s) |
+| `GET` | `/api/v1/portal/submissions/{id}/detection` | owner | Last stored result |
+| `GET` | `/api/v1/portal/submissions/{id}/detection/log` | owner | stdout tail, for a failed run |
+| `GET` | `/api/v1/portal/submissions/{id}/detection/overlay` | owner | Annotated PNG |
+| `GET` | `/api/v1/admin/submissions/{id}/detection` | admin | Any result (read-only) |
+| `GET` | `/api/v1/admin/submissions/{id}/detection/overlay` | admin | Any overlay |
 
 ### Example
 
 ```powershell
 # 1. is it available?
-Invoke-RestMethod http://127.0.0.1:8000/portal/detection/availability -WebSession $s
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/portal/detection/availability -WebSession $s
 
 # 2. run it (this blocks ~30 s)
 Invoke-RestMethod -Method Post `
-  http://127.0.0.1:8000/portal/submissions/16/detect -WebSession $s
+  http://127.0.0.1:8000/api/v1/portal/submissions/16/detect -WebSession $s
 
 # 3. read it back, any time
-Invoke-RestMethod http://127.0.0.1:8000/portal/submissions/16/detection -WebSession $s
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/portal/submissions/16/detection -WebSession $s
 ```
 
 ```json
@@ -228,7 +228,7 @@ Invoke-RestMethod http://127.0.0.1:8000/portal/submissions/16/detection -WebSess
   "box_fraction_of_frame": 0.1, "mask_area_ratio": 0.0682, "border_leak": 0.0,
   "detector_origin": "zip_trained_obb", "uses_zip_taxonomy": true,
   "elapsed_seconds": 25.77, "has_overlay": true,
-  "overlay_url": "/portal/submissions/16/detection/overlay"
+  "overlay_url": "/api/v1/portal/submissions/16/detection/overlay"
 }
 ```
 
@@ -239,7 +239,7 @@ A second `POST` returns the stored result instantly instead of spending another
 change:
 
 ```powershell
-Invoke-RestMethod -Method Post "http://127.0.0.1:8000/portal/submissions/16/detect?force=true" -WebSession $s
+Invoke-RestMethod -Method Post "http://127.0.0.1:8000/api/v1/portal/submissions/16/detect?force=true" -WebSession $s
 ```
 
 ---

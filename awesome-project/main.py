@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from api import API_PREFIX
 from config import get_settings
 from database import SessionLocal
 from errors import register_exception_handlers
@@ -73,18 +74,24 @@ from services.security import bearer_scheme  # noqa: E402
 #: the real 401 still comes from `get_current_user`.
 authed = [Depends(bearer_scheme)]
 
+# Every API route lives under `/api/v1` (see `api.py`). The prefix is applied
+# here, once, rather than in each `APIRouter(prefix=...)` — otherwise the
+# version is duplicated across six files and the next bump can half-apply.
+
 # Auth is public (login/register) but also has protected endpoints (me, change-password)
-app.include_router(auth_router)
+app.include_router(auth_router, prefix=API_PREFIX)
 # Portal: owner-scoped operations for signed-in users
-app.include_router(portal_router, dependencies=authed)
+app.include_router(portal_router, prefix=API_PREFIX, dependencies=authed)
 # Detection: runs on the caller's own submissions
-app.include_router(detection_router, dependencies=authed)
+app.include_router(detection_router, prefix=API_PREFIX, dependencies=authed)
 # Lifting plan: one Markdown document per submission, no persistence
-app.include_router(lifting_plan_router, dependencies=authed)
+app.include_router(lifting_plan_router, prefix=API_PREFIX, dependencies=authed)
 # Admin: review workflow + user management (cross-user, requires admin role)
-app.include_router(admin_router, dependencies=authed)
-# Health checks — registered last, so /health keeps its literal path even if a
-# resource router later introduces a `/{id}` route that would shadow it.
+app.include_router(admin_router, prefix=API_PREFIX, dependencies=authed)
+# Health checks stay unversioned (D1): probe paths are configured in load
+# balancers and containers, and are not part of the versioned API contract.
+# Registered last, so /health keeps its literal path even if a resource router
+# later introduces a `/{id}` route that would shadow it.
 # Included exactly once: a second include duplicates the routes and their
 # OpenAPI operationIds.
 app.include_router(health_router)
@@ -102,6 +109,7 @@ def root():
     return envelope(
         {
             "message": "API is running",
+            "api": API_PREFIX,
             "ui": "/ui/",
             "docs": "/docs",
             "health": "/health",

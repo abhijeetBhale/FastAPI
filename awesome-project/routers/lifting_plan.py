@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from api import API_PREFIX
 from database import get_db
 from models.user import User
 from routers.detection import _load_owned
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/portal", tags=["Lifting Plan"])
 
 
 @router.get(
-    "/submissions/{inspection_id}/lifting_plan",
+    "/submissions/{inspection_id}/lifting-plan",
     summary="Generate a lifting plan as a Markdown document",
 )
 def lifting_plan(
@@ -61,7 +62,10 @@ def lifting_plan(
     if insp.detection_status == "not_run":
         raise HTTPException(
             status_code=422,
-            detail="Run detection first: POST /portal/submissions/{id}/detect",
+            detail=(
+                "Run detection first: "
+                f"POST {API_PREFIX}/portal/submissions/{{id}}/detect"
+            ),
         )
     if insp.detection_status == "no_cargo":
         raise HTTPException(

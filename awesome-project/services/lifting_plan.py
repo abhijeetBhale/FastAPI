@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from api import API_PREFIX
 from database import utcnow
 from models.inspection import Inspection
 
@@ -115,7 +116,7 @@ def build_lifting_plan(
         "rigging": rigging,
         "warnings": warnings,
         "overlay_url": (
-            f"/portal/submissions/{insp.id}/detection/overlay"
+            f"{API_PREFIX}/portal/submissions/{insp.id}/detection/overlay"
             if insp.detection_overlay else None
         ),
     }

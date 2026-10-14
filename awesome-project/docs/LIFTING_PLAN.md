@@ -14,7 +14,7 @@ Part 3: equipment/gears + load calculation, Part 4: sketch).
 ## 1. The endpoint
 
 ```text
-GET /portal/submissions/{id}/lifting-plan?ref_m=&ref_px=&format=
+GET /api/v1/portal/submissions/{id}/lifting-plan?ref_m=&ref_px=&format=
 ```
 
 | Param | Meaning |

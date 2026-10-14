@@ -16,6 +16,7 @@ See `docs/API_CONVENTIONS.md` §4.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any, Optional
 
@@ -88,6 +89,43 @@ def problem(
     )
 
 
+def _path_template_regex(template: str) -> re.Pattern[str]:
+    """`/api/v1/admin/users/{user_id}` → a regex that matches a real path."""
+    parts = []
+    for segment in template.strip("/").split("/"):
+        if segment.startswith("{") and segment.endswith("}"):
+            # `{param}` is one segment; `{param:path}` swallows the rest.
+            converter = segment[1:-1].split(":", 1)
+            is_catch_all = len(converter) == 2 and converter[1] == "path"
+            parts.append(r".+" if is_catch_all else r"[^/]+")
+        else:
+            parts.append(re.escape(segment))
+    return re.compile("^/" + "/".join(parts) + "/?$")
+
+
+def allowed_methods(app: FastAPI, path: str) -> list[str]:
+    """Every method this app supports on `path` — for a 405's `Allow` header.
+
+    Starlette builds `Allow` from the single `Route` object that matched the
+    path, so where one path is served by several handlers the header lists only
+    the first one's methods: `PATCH` was missing from
+    `/api/v1/admin/users/{id}` and `DELETE` from some submission paths. RFC
+    9110 §15.5.6 requires the complete set, and §5 of the API conventions
+    relies on this header to document a 405.
+
+    `HEAD` is added wherever `GET` works, mirroring Starlette's own rule.
+    Preflight `OPTIONS` is answered by the CORS middleware before routing, so
+    it is deliberately not listed here.
+    """
+    allowed: set[str] = set()
+    for template, operations in app.openapi().get("paths", {}).items():
+        if _path_template_regex(template).match(path):
+            allowed.update(method.upper() for method in operations)
+    if "GET" in allowed:
+        allowed.add("HEAD")
+    return sorted(allowed)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException):
@@ -107,8 +145,14 @@ def register_exception_handlers(app: FastAPI) -> None:
             detail = message if message else "Request failed."
         if not isinstance(detail, str):
             detail = str(detail)
+        headers = dict(exc.headers or {})
+        if status_code == 405:
+            # Rebuild it: Starlette's own `Allow` names only the first handler
+            # that matched the path, which is misleading when a path supports
+            # more than one method across separate route objects.
+            headers["Allow"] = ", ".join(allowed_methods(request.app, request.url.path))
         return problem(
-            status_code, detail, code=code, extra=extra, headers=exc.headers
+            status_code, detail, code=code, extra=extra, headers=headers or None
         )
 
     @app.exception_handler(RequestValidationError)

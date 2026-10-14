@@ -377,20 +377,28 @@ erDiagram
 
 ## API reference
 
-Base URL `http://127.0.0.1:8000`.
+Base path `/api/v1` — every API route is `/api/v1/{group}/{resource...}`, with
+`auth`, `portal` and `admin` as the groups. See
+[`docs/API_CONVENTIONS.md`](docs/API_CONVENTIONS.md) §0 for the rule and §7 for
+the endpoint-by-endpoint reference.
 
-| Method | Path | Body | Success | Notes |
-|---|---|---|---|---|
-| `GET` | `/` | – | 200 | Health message |
-| `GET` | `/users/` | – | 200 | Query: `skip` (0), `limit` (100) |
-| `GET` | `/users/{user_id}` | – | 200 | 404 if missing |
-| `POST` | `/users/` | `UserCreate` | 201 | 400 if email already registered |
-| `PUT` | `/users/{user_id}` | `UserUpdate` | 200 | Partial; 404 if missing |
-| `DELETE` | `/users/{user_id}` | – | 204 | Cascades to addresses; 404 if missing |
-| `GET` | `/addresses/` | – | 200 | Query: `skip` (0), `limit` (100) |
-| `GET` | `/addresses/{address_id}` | – | 200 | 404 if missing |
-| `POST` | `/addresses/` | `AddressCreate` | 201 | 400 if `user_id` does not exist |
-| `DELETE` | `/addresses/{address_id}` | – | 204 | 404 if missing |
+Unversioned by design: `/` (banner), `/health` + `/health/ready` (probes),
+`/docs`, `/redoc`, `/openapi.json` (tooling) and `/ui` (static client).
+
+| Surface | Methods | Purpose |
+|---|---|---|
+| `/api/v1/auth/*` | `POST` ×5, `GET` ×1 | Register, log in/out, read the session, change/set a password |
+| `/api/v1/portal/submissions/*` | `GET`, `POST`, `DELETE` | Owner-scoped submissions, detection, image, lifting plan |
+| `/api/v1/portal/*` | `GET` | Cargo types, summary, detector availability |
+| `/api/v1/admin/submissions/*` | `GET`, `POST`, `PATCH`, `DELETE` | Review workflow, bulk decisions, purge/restore, images |
+| `/api/v1/admin/users/*` | `GET`, `PATCH` | User list/detail, role changes |
+| `/api/v1/admin/*` | `GET` | Stats, audit log, cargo types |
+| `/health`, `/health/ready` | `GET` | Liveness / readiness |
+
+The full, exact list — path, method and status codes — is generated into
+`docs/API_CONVENTIONS.md` §9 from the running app by
+`scripts/regen_openapi.py`, and `tests/test_api_contract.py` fails if the served
+routes and the document disagree.
 
 Interactive docs: `/docs` (Swagger UI), `/redoc` (ReDoc), `/openapi.json` (raw schema).
 
@@ -445,10 +453,10 @@ A signed-in user can run cargo detection on their own submission:
 
 ```powershell
 # is the detector usable?
-Invoke-RestMethod http://127.0.0.1:8000/portal/detection/availability -WebSession $s
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/portal/detection/availability -WebSession $s
 
 # run it — blocks 16-45 s on CPU
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/portal/submissions/16/detect -WebSession $s
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/portal/submissions/16/detect -WebSession $s
 ```
 
 The pipeline (SAM ViT-B + a cargo-tuned YOLO-OBB detector) lives in a separate
@@ -459,11 +467,11 @@ sides meet at a JSON file.
 
 | Endpoint | Who | Purpose |
 |---|---|---|
-| `GET /portal/detection/availability` | user | Whether the detector can run, and why not |
-| `POST /portal/submissions/{id}/detect` | owner | Run detection (cached; `?force=true` to re-run) |
-| `GET /portal/submissions/{id}/detection` | owner | Last stored result |
-| `GET /portal/submissions/{id}/detection/overlay` | owner | Annotated PNG |
-| `GET /admin/submissions/{id}/detection` | admin | Any result, read-only |
+| `GET /api/v1/portal/detection/availability` | user | Whether the detector can run, and why not |
+| `POST /api/v1/portal/submissions/{id}/detect` | owner | Run detection (cached; `?force=true` to re-run) |
+| `GET /api/v1/portal/submissions/{id}/detection` | owner | Last stored result |
+| `GET /api/v1/portal/submissions/{id}/detection/overlay` | owner | Annotated PNG |
+| `GET /api/v1/admin/submissions/{id}/detection` | admin | Any result, read-only |
 
 **It reports what is visible, not what it weighs.** The pipeline's measurement
 stage returns *relative* volume from normalised camera intrinsics, so

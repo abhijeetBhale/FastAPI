@@ -2,10 +2,13 @@
 
 Two surfaces, matching the rest of the app:
 
-* `/portal/detect/...` — a signed-in user runs detection on their **own**
-  submission. This is the self-service path.
-* `/admin/...` — an admin reads any submission's result. It does not live in
-  this file; see `routers/admin.py`.
+* `/api/v1/portal/submissions/{id}/detect` — a signed-in user runs detection
+  on their **own** submission. This is the self-service path.
+* `/api/v1/admin/...` — an admin reads any submission's result. It does not
+  live in this file; see `routers/admin.py`.
+
+Every path here is relative to `api.API_PREFIX`, applied in `main.py` rather
+than on this router.
 
 Every route follows the app's existing rule: a record that belongs to someone
 else returns **404, not 403**, so ids cannot be enumerated.
@@ -26,6 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
+from api import API_PREFIX
 from config import get_settings
 from database import get_db, utcnow
 from errors import problem
@@ -94,7 +98,7 @@ def _to_envelope(
     insp: Inspection,
     payload: dict | None = None,
     *,
-    overlay_base: str = "/portal/submissions",
+    overlay_base: str = f"{API_PREFIX}/portal/submissions",
 ) -> dict:
     """Assemble the `{data, meta}` envelope from a stored or fresh result.
 

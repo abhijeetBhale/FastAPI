@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import pytest
 
+from api import API_PREFIX
+
 
 @pytest.fixture
 def submission(client, png_bytes, db):
     """A submission owned by the signed-in client, with a detected result."""
-    client.post("/auth/register", json={"name": "Ana", "email": "ana@example.com",
+    client.post(API_PREFIX + "/auth/register", json={"name": "Ana", "email": "ana@example.com",
                                         "password": "quay-crane-42"})
-    r = client.post("/portal/submissions", data={"cargo_type": "scrap-steel"},
+    r = client.post(API_PREFIX + "/portal/submissions", data={"cargo_type": "scrap-steel"},
                     files={"image": ("c.png", png_bytes(), "image/png")})
     assert r.status_code == 201, r.text
     insp = r.json()["data"]
@@ -39,7 +41,7 @@ def submission(client, png_bytes, db):
 
 @pytest.fixture
 def plan_url(submission):
-    return f"/portal/submissions/{submission['id']}/lifting_plan"
+    return f"{API_PREFIX}/portal/submissions/{submission['id']}/lifting-plan"
 
 
 def _set_result(db, insp_id, result):
@@ -59,9 +61,9 @@ def _set_overlay(db, insp_id, filename):
 
 
 def as_other_user(client):
-    client.post("/auth/logout")
+    client.post(API_PREFIX + "/auth/logout")
     client.cookies.clear()
-    client.post("/auth/register", json={"name": "Fo", "email": "fo@example.com",
+    client.post(API_PREFIX + "/auth/register", json={"name": "Fo", "email": "fo@example.com",
                                         "password": "quay-crane-42"})
 
 
@@ -70,7 +72,7 @@ class TestAuthorisation:
     def test_requires_a_session(self, client, submission):
         client.cookies.clear()
         assert client.get(
-            f"/portal/submissions/{submission['id']}/lifting_plan"
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/lifting-plan"
         ).status_code == 401
 
     def test_another_users_submission_is_404(self, client, submission, plan_url):
@@ -173,9 +175,9 @@ class TestCalibration:
 
     def test_other_cargo_type_has_no_weight_estimate(self, client, png_bytes, db):
         """cargo_type 'other' has null density — the API must not guess."""
-        client.post("/auth/register", json={"name": "Fo", "email": "fo@example.com",
+        client.post(API_PREFIX + "/auth/register", json={"name": "Fo", "email": "fo@example.com",
                                             "password": "quay-crane-42"})
-        r = client.post("/portal/submissions",
+        r = client.post(API_PREFIX + "/portal/submissions",
                         data={"cargo_type": "other"},
                         files={"image": ("c.png", png_bytes(), "image/png")})
         insp = r.json()["data"]
@@ -193,7 +195,7 @@ class TestCalibration:
         db.commit()
 
         body = client.get(
-            f"/portal/submissions/{insp['id']}/lifting_plan").text
+            f"{API_PREFIX}/portal/submissions/{insp['id']}/lifting-plan").text
         # No density line, no kg estimate — the doc says to enter it manually.
         assert "kg/m³ [AI]" not in body
         assert "~" not in body
@@ -276,9 +278,9 @@ class TestRigging:
 
     def test_no_rigging_without_box(self, client, png_bytes, db):
         """A detection with no box → rigging unavailable, not fabricated."""
-        client.post("/auth/register", json={"name": "Fo", "email": "fo@example.com",
+        client.post(API_PREFIX + "/auth/register", json={"name": "Fo", "email": "fo@example.com",
                                             "password": "quay-crane-42"})
-        r = client.post("/portal/submissions",
+        r = client.post(API_PREFIX + "/portal/submissions",
                         data={"cargo_type": "scrap-steel"},
                         files={"image": ("c.png", png_bytes(), "image/png")})
         insp = r.json()["data"]
@@ -296,7 +298,7 @@ class TestRigging:
         db.commit()
 
         data = client.get(
-            f"/portal/submissions/{insp['id']}/lifting_plan?format=json"
+            f"{API_PREFIX}/portal/submissions/{insp['id']}/lifting-plan?format=json"
         ).json()["data"]
         assert data["rigging"]["available"] is False
         assert "reason" in data["rigging"]

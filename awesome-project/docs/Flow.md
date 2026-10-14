@@ -277,7 +277,7 @@ sequenceDiagram
     participant SVC as services/inspection_service.py
     participant PG as PostgreSQL
 
-    B->>MC: GET /portal/submissions?skip=0&limit=6
+    B->>MC: GET /api/v1/portal/submissions?skip=0&limit=6
     MC->>MC: attach request_id, start timer
     MC->>AM: call_next
     AM->>AM: path is /portal → cookie required
@@ -372,15 +372,15 @@ account and a wrong password take comparable time.
 ### Routes
 
 ```text
-POST /auth/register     create an account, sign in immediately
-POST /auth/login        exchange credentials for a cookie
-POST /auth/logout       clear the cookie
-GET  /auth/me           bootstrap: the user + their permission list
-POST /auth/set-password first password for an account that has none
-POST /auth/change-password
+POST /api/v1/auth/register     create an account, sign in immediately
+POST /api/v1/auth/login        exchange credentials for a cookie
+POST /api/v1/auth/logout       clear the cookie
+GET  /api/v1/auth/me           bootstrap: the user + their permission list
+POST /api/v1/auth/set-password first password for an account that has none
+POST /api/v1/auth/change-password
 ```
 
-`/auth/me` returning 401 on page load is how the frontend decides to show the
+`/api/v1/auth/me` returning 401 on page load is how the frontend decides to show the
 sign-in screen rather than the dashboard.
 
 ---
@@ -452,7 +452,7 @@ Both appear, and the distinction is deliberate:
 | Signed in, another user's record | **404** | a 403 would confirm the id exists |
 
 The last row is the one worth remembering: returning 403 for
-`/portal/submissions/999` would let an attacker enumerate which submissions exist.
+`/api/v1/portal/submissions/999` would let an attacker enumerate which submissions exist.
 
 ### The hole this closed
 
@@ -475,16 +475,16 @@ is protected by default rather than by remembering to add a check.
 ```mermaid
 flowchart LR
     subgraph public["Public"]
-        R1["GET /<br/>GET /health<br/>POST /auth/register<br/>POST /auth/login"]
+        R1["GET /<br/>GET /health<br/>POST /api/v1/auth/register<br/>POST /api/v1/auth/login"]
     end
     subgraph portal["Portal — own records only"]
-        P1["/portal/submissions<br/>/portal/summary<br/>/portal/cargo-types"]
+        P1["/api/v1/portal/submissions<br/>/api/v1/portal/summary<br/>/api/v1/portal/cargo-types"]
     end
     subgraph detect["Portal — detection"]
-        D1["/portal/detection/availability<br/>POST …/detect<br/>GET …/detection"]
+        D1["/api/v1/portal/detection/availability<br/>POST …/detect<br/>GET …/detection"]
     end
     subgraph adminA["Admin"]
-        A1["/admin/submissions<br/>/admin/stats<br/>/admin/audit<br/>/admin/users"]
+        A1["/api/v1/admin/submissions<br/>/api/v1/admin/stats<br/>/api/v1/admin/audit<br/>/api/v1/admin/users"]
     end
     subgraph adminB["Cross-user (admin)"]
         A2["/inspections/**<br/>GET /users/"]
@@ -494,18 +494,18 @@ flowchart LR
 
 | Surface | Prefix | Guard |
 |---|---|---|
-| Public | `/`, `/health`, `/auth/*` | none or "signed in" |
-| Portal | `/portal/**` | session + ownership per record |
-| Detection | `/portal/detection/*`, `/portal/…/detect` | session + `submissions:create` + ownership |
-| Admin | `/admin/**` | session + `role == admin` (middleware **and** dependency) |
+| Public | `/`, `/health`, `/api/v1/auth/*` | none or "signed in" |
+| Portal | `/api/v1/portal/**` | session + ownership per record |
+| Detection | `/api/v1/portal/detection/*`, `/api/v1/portal/…/detect` | session + `submissions:create` + ownership |
+| Admin | `/api/v1/admin/**` | session + `role == admin` (middleware **and** dependency) |
 | Cross-user | `/inspections/**`, `GET /users/` | `require_permission(read_any)` |
 
-Two admin surfaces exist because they serve different jobs: `/admin/**` is the
+Two admin surfaces exist because they serve different jobs: `/api/v1/admin/**` is the
 review workflow, `/inspections/**` is the lower-level cross-user API.
 
 Detection sits inside the portal rather than beside it because it acts on the
 caller's **own** submission — same ownership rule, same 404-on-someone-else's-id.
-Admins get a read-only view (`/admin/submissions/{id}/detection`) and cannot
+Admins get a read-only view (`/api/v1/admin/submissions/{id}/detection`) and cannot
 trigger a run: working a review queue must not cost 30 s of CPU per row.
 
 ---
@@ -518,7 +518,7 @@ What happens when the signed-in user uploads through the portal.
 sequenceDiagram
     autonumber
     participant U as Browser
-    participant P as POST /portal/submissions
+    participant P as POST /api/v1/portal/submissions
     participant S as security
     participant SV as InspectionService
     participant AS as AuditService
@@ -550,7 +550,7 @@ sequenceDiagram
     Note over SV,PG: file write + DB commit, rolled back together on failure
     SV-->>P: Inspection
     P->>PG: store idempotency_key
-    P-->>U: 201 + record, image saved to /portal/submissions/1/image
+    P-->>U: 201 + record, image saved to /api/v1/portal/submissions/1/image
 ```
 
 ### Three details worth understanding
@@ -590,7 +590,7 @@ sequenceDiagram
     participant NB as Revamping.ipynb
     participant PG as PostgreSQL
 
-    B->>R: POST /portal/submissions/7/detect
+    B->>R: POST /api/v1/portal/submissions/7/detect
     R->>R: ownership → 404 if not yours
     R->>S: is_available()
     alt disabled or misconfigured
@@ -642,13 +642,13 @@ caller gets **503**, not a corrupted first result.
 
 ```mermaid
 flowchart TD
-    A[Admin opens Admin tab] --> B[GET /admin/stats]
-    B --> C[GET /admin/submissions<br/>filters: search, status, cargo]
+    A[Admin opens Admin tab] --> B[GET /api/v1/admin/stats]
+    B --> C[GET /api/v1/admin/submissions<br/>filters: search, status, cargo]
     C --> D[Review queue<br/>status = submitted]
     D --> E{Decide}
-    E -->|approve one| F["POST /admin/submissions/&#123;id&#125;/approve?note=..."]
-    E -->|reject one| G["POST /admin/submissions/&#123;id&#125;/reject?note=..."]
-    E -->|bulk| H["POST /admin/submissions/bulk<br/>ids + action"]
+    E -->|approve one| F["POST /api/v1/admin/submissions/&#123;id&#125;/approve<br/>body: note"]
+    E -->|reject one| G["POST /api/v1/admin/submissions/&#123;id&#125;/reject<br/>body: note"]
+    E -->|bulk| H["POST /api/v1/admin/submissions/bulk<br/>ids + action"]
     F --> I[set status, status_note,<br/>reviewed_by, reviewed_at]
     G --> I
     H --> I
@@ -888,12 +888,12 @@ Served by `StaticFiles` at `/ui/`.
 ### Boot
 
 ```text
-GET /auth/me
+GET /api/v1/auth/me
   401 → sign-in screen
   200 → dashboard, and show the Admin tab only if is_admin
 ```
 
-The tab is hidden rather than merely failing if clicked, because `/auth/me`
+The tab is hidden rather than merely failing if clicked, because `/api/v1/auth/me`
 returns the permission list specifically so the UI can render only what will work.
 
 ### Structure
@@ -922,11 +922,11 @@ which switches to the upload tab.
 
 ### Notable details
 
-- Portal cards load images from `/portal/submissions/{id}/image` (owner-scoped).
+- Portal cards load images from `/api/v1/portal/submissions/{id}/image` (owner-scoped).
   The plain `/inspections/{id}/image` route is admin-only — an early version of
   RBAC broke every thumbnail, and tests now pin both halves.
 - Uploads send an `Idempotency-Key`, so a retry after a timeout does not duplicate.
-- Cargo types are fetched from `/portal/cargo-types`, not hardcoded in the HTML.
+- Cargo types are fetched from `/api/v1/portal/cargo-types`, not hardcoded in the HTML.
 - `escapeHtml()` on every interpolated value.
 
 ---
@@ -1050,7 +1050,7 @@ Drops the database, recreates it, replays all migrations. **Deletes everything.*
    for the detection pipeline.
 2. Images live on local disk, so a second app instance cannot serve them. Moving
    to S3 or MinIO changes only `resolve_image_path()` and `create_inspection()`.
-3. No rate limiting on `/auth/login`, so the login endpoint is brute-forceable.
+3. No rate limiting on `/api/v1/auth/login`, so the login endpoint is brute-forceable.
 4. No refresh-token rotation; the session simply expires after 12 hours.
 5. Tests roll back a transaction rather than truncating, so a service that calls
    `db.commit()` inside a test would escape the rollback. Nothing does today.

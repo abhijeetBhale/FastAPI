@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from api import API_PREFIX
 from services import detection
 
 
@@ -90,7 +91,7 @@ FAILED_RESULT = {
 @pytest.fixture
 def authed(client):
     """A signed-in plain user. The `client` fixture starts signed *out*."""
-    client.post("/auth/register", json={"name": "Ana", "email": "ana@example.com",
+    client.post(API_PREFIX + "/auth/register", json={"name": "Ana", "email": "ana@example.com",
                                         "password": "quay-crane-42"})
     return client
 
@@ -112,9 +113,9 @@ def _isolated_work_root(tmp_path, monkeypatch):
 @pytest.fixture
 def submission(client, png_bytes):
     """A submission owned by the signed-in client."""
-    client.post("/auth/register", json={"name": "Ana", "email": "ana@example.com",
+    client.post(API_PREFIX + "/auth/register", json={"name": "Ana", "email": "ana@example.com",
                                         "password": "quay-crane-42"})
-    r = client.post("/portal/submissions", data={"cargo_type": "scrap-steel"},
+    r = client.post(API_PREFIX + "/portal/submissions", data={"cargo_type": "scrap-steel"},
                     files={"image": ("c.png", png_bytes(), "image/png")})
     assert r.status_code == 201, r.text
     return r.json()["data"]
@@ -165,9 +166,9 @@ def enabled(monkeypatch):
 
 
 def as_other_user(client):
-    client.post("/auth/logout")
+    client.post(API_PREFIX + "/auth/logout")
     client.cookies.clear()
-    client.post("/auth/register", json={"name": "Fo", "email": "bo@example.com",
+    client.post(API_PREFIX + "/auth/register", json={"name": "Fo", "email": "bo@example.com",
                                         "password": "quay-crane-42"})
 
 
@@ -179,7 +180,7 @@ class TestAvailability:
         from config import get_settings
 
         monkeypatch.setattr(get_settings(), "detection_enabled", False)
-        r = authed.get("/portal/detection/availability")
+        r = authed.get(API_PREFIX + "/portal/detection/availability")
         assert r.status_code == 200
         assert r.json()["data"]["enabled"] is False
         assert r.json()["data"]["available"] is False
@@ -194,13 +195,13 @@ class TestAvailability:
 
     def test_availability_needs_a_session(self, client):
         client.cookies.clear()
-        assert client.get("/portal/detection/availability").status_code == 401
+        assert client.get(API_PREFIX + "/portal/detection/availability").status_code == 401
 
     def test_measurement_is_advertised_as_unavailable(self, authed, monkeypatch):
         """The volume/weight columns stay null; the API must say so rather than
         letting a caller assume they are coming."""
         monkeypatch.setattr(detection, "is_available", lambda: (True, "ready"))
-        body = authed.get("/portal/detection/availability").json()
+        body = authed.get(API_PREFIX + "/portal/detection/availability").json()
         assert body["data"]["available"] is True
         assert body["data"]["supports_measurement"] is False
 
@@ -230,7 +231,7 @@ class TestDetect:
     def test_detect_stores_and_returns_envelope(self, client, submission,
                                                fake_run, enabled):
         fake_run()
-        r = client.post(f"/portal/submissions/{submission['id']}/detect")
+        r = client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
 
         assert r.status_code == 200, r.text
         body = r.json()
@@ -257,7 +258,7 @@ class TestDetect:
         and `has_overlay` are all derivable â€” they must not appear."""
         fake_run()
         body = client.post(
-            f"/portal/submissions/{submission['id']}/detect").json()
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detect").json()
         data = body["data"]
         assert "ok" not in data
         assert "status" not in data
@@ -272,7 +273,7 @@ class TestDetect:
         """`[x1, y1, x2, y2]` becomes `{x, y, w, h}`."""
         fake_run()
         body = client.post(
-            f"/portal/submissions/{submission['id']}/detect").json()
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detect").json()
         box = body["data"]["box"]
         assert box == {"x": 52, "y": 287, "w": 144, "h": 172}
 
@@ -281,7 +282,7 @@ class TestDetect:
         """YOLO and SAM boxes nest under `models` when present."""
         fake_run()
         body = client.post(
-            f"/portal/submissions/{submission['id']}/detect").json()
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detect").json()
         obj = body["data"]["objects"][0]
         assert "models" in obj
         assert obj["models"]["yolo"] is not None
@@ -293,7 +294,7 @@ class TestDetect:
         from models.inspection import Inspection
 
         fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
 
         insp = db.get(Inspection, submission["id"])
         assert insp.detection_result is not None
@@ -308,7 +309,7 @@ class TestDetect:
         from models.inspection import Inspection
 
         fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         insp = db.get(Inspection, submission["id"])
         assert insp.volume_m3 is None
         assert insp.estimated_weight_kg is None
@@ -317,7 +318,7 @@ class TestDetect:
         """'No cargo here' is a correct answer, so it is 200 with
         detected:false â€” not an error the caller has to special-case."""
         fake_run(REFUSED_RESULT, overlay=False)
-        r = client.post(f"/portal/submissions/{submission['id']}/detect")
+        r = client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
 
         assert r.status_code == 200, r.text
         data = r.json()["data"]
@@ -333,7 +334,7 @@ class TestDetect:
         from models.inspection import Inspection
 
         fake_run(REFUSED_RESULT, overlay=False)
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         insp = db.get(Inspection, submission["id"])
         assert insp.detection_result is not None
         assert insp.detected_at is not None
@@ -346,7 +347,7 @@ class TestDetect:
         from models.inspection import Inspection
 
         fake_run(FAILED_RESULT, overlay=False)
-        r = client.post(f"/portal/submissions/{submission['id']}/detect")
+        r = client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
 
         assert r.status_code == 502
         body = r.json()
@@ -374,7 +375,7 @@ class TestDetect:
         monkeypatch.setattr(detection, "run_detection",
                             lambda *a, **k: calls.append(a))
 
-        r = client.post(f"/portal/submissions/{submission['id']}/detect")
+        r = client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 503
         err = r.json()
         assert err["title"] == "Detection Unavailable"
@@ -385,15 +386,15 @@ class TestDetect:
     def test_a_second_run_is_cached(self, client, submission, fake_run, enabled):
         """Re-running costs 30 s of CPU to recompute an unchanged answer."""
         calls = fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         assert len(calls) == 1
 
     def test_force_reruns(self, client, submission, fake_run, enabled):
         """Needed after the weights or the notebook change."""
         calls = fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
-        client.post(f"/portal/submissions/{submission['id']}/detect?force=true")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect?force=true")
         assert len(calls) == 2
 
     def test_a_timeout_is_504(self, client, submission, monkeypatch, enabled):
@@ -401,7 +402,7 @@ class TestDetect:
             raise detection.DetectionTimeout("Detection exceeded 300s")
 
         monkeypatch.setattr(detection, "run_detection", boom)
-        r = client.post(f"/portal/submissions/{submission['id']}/detect")
+        r = client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 504
         assert r.json()["title"] == "Detection Timeout"
 
@@ -412,7 +413,7 @@ class TestDetect:
                                                  "in progress.")
 
         monkeypatch.setattr(detection, "run_detection", busy)
-        r = client.post(f"/portal/submissions/{submission['id']}/detect")
+        r = client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 503
         assert r.json()["title"] == "Detection Busy"
 
@@ -426,20 +427,20 @@ class TestDetect:
         calls = fake_run()
         resolve_image_path(insp).unlink()
 
-        r = client.post(f"/portal/submissions/{submission['id']}/detect")
+        r = client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 404
         assert len(calls) == 0
 
     def test_an_unknown_submission_is_404(self, client, submission, fake_run,
                                           enabled):
         fake_run()
-        assert client.post("/portal/submissions/99999/detect").status_code == 404
+        assert client.post(API_PREFIX + "/portal/submissions/99999/detect").status_code == 404
 
 
 # ---- reading results -----------------------------------------------------
 class TestReadDetection:
     def test_get_before_any_run(self, client, submission):
-        r = client.get(f"/portal/submissions/{submission['id']}/detection")
+        r = client.get(f"{API_PREFIX}/portal/submissions/{submission['id']}/detection")
         assert r.status_code == 200
         data = r.json()["data"]
         assert data["detected"] is False
@@ -449,15 +450,15 @@ class TestReadDetection:
     def test_get_never_starts_a_run(self, client, submission, fake_run, enabled):
         """Reading a result must be cheap; only POST may burn CPU."""
         calls = fake_run()
-        client.get(f"/portal/submissions/{submission['id']}/detection")
+        client.get(f"{API_PREFIX}/portal/submissions/{submission['id']}/detection")
         assert len(calls) == 0
 
     def test_get_after_a_run_returns_it(self, client, submission, fake_run,
                                         enabled):
         fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         data = client.get(
-            f"/portal/submissions/{submission['id']}/detection"
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detection"
         ).json()["data"]
         assert data["detected"] is True
         assert data["label"] == "Cargo-Box"
@@ -466,9 +467,9 @@ class TestReadDetection:
                                                        fake_run, enabled):
         """The card grid must show 'not analysed' without a second request."""
         fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
 
-        items = client.get("/portal/submissions").json()["data"]
+        items = client.get(API_PREFIX + "/portal/submissions").json()["data"]
         assert items[0]["detection_status"] == "detected"
         assert items[0]["cargo_object_count"] == 2
         assert items[0]["detected_at"] is not None
@@ -477,8 +478,8 @@ class TestReadDetection:
                                                   fake_run, enabled):
         """These are different facts and the UI must be able to tell them."""
         fake_run(REFUSED_RESULT, overlay=False)
-        client.post(f"/portal/submissions/{submission['id']}/detect")
-        items = client.get("/portal/submissions").json()["data"]
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
+        items = client.get(API_PREFIX + "/portal/submissions").json()["data"]
         assert items[0]["detection_status"] == "no_cargo"
         assert items[0]["cargo_object_count"] == 0
 
@@ -486,8 +487,8 @@ class TestReadDetection:
                                             enabled):
         """A report can hold dozens of boxes; it would bloat every list call."""
         fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
-        items = client.get("/portal/submissions").json()["data"]
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
+        items = client.get(API_PREFIX + "/portal/submissions").json()["data"]
         assert "objects" not in items[0]
         assert "detection_result" not in items[0]
 
@@ -511,7 +512,7 @@ class TestOverlay:
 
         fake_run()
         body = client.post(
-            f"/portal/submissions/{submission['id']}/detect").json()
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detect").json()
         assert body["meta"]["links"]["overlay"].endswith("/detection/overlay")
 
         png = client.get(body["meta"]["links"]["overlay"])
@@ -522,9 +523,9 @@ class TestOverlay:
         """CELL 10 draws no box when the gate rejects everything, so there is
         nothing to serve."""
         fake_run(REFUSED_RESULT, overlay=False)
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         r = client.get(
-            f"/portal/submissions/{submission['id']}/detection/overlay")
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detection/overlay")
         assert r.status_code == 404
 
     def test_path_traversal_is_refused(self):
@@ -544,68 +545,68 @@ class TestDetectionAuthorisation:
     def test_detect_requires_a_session(self, client, submission):
         client.cookies.clear()
         assert client.post(
-            f"/portal/submissions/{submission['id']}/detect").status_code == 401
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detect").status_code == 401
 
     def test_another_users_submission_is_404_not_403(self, client, submission,
                                                       fake_run, enabled):
         """403 would confirm the id exists, letting anyone walk the id space."""
         fake_run()
         as_other_user(client)
-        r = client.post(f"/portal/submissions/{submission['id']}/detect")
+        r = client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 404
 
     def test_another_user_cannot_read_the_result(self, client, submission,
                                                  fake_run, enabled):
         fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         as_other_user(client)
         assert client.get(
-            f"/portal/submissions/{submission['id']}/detection").status_code == 404
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detection").status_code == 404
 
     def test_another_user_cannot_read_the_overlay(self, client, submission,
                                                   fake_run, enabled):
         fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         as_other_user(client)
         assert client.get(
-            f"/portal/submissions/{submission['id']}/detection/overlay"
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detection/overlay"
         ).status_code == 404
 
     def test_another_user_cannot_read_the_log(self, client, submission,
                                               fake_run, enabled):
         fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         as_other_user(client)
         assert client.get(
-            f"/portal/submissions/{submission['id']}/detection/log"
+            f"{API_PREFIX}/portal/submissions/{submission['id']}/detection/log"
         ).status_code == 404
 
     def test_an_admin_can_read_any_result(self, client, admin_client, db,
                                           submission, fake_run, enabled):
         """Admins review a queue, so they must see what the detector said."""
         fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
 
         r = admin_client.get(
-            f"/admin/submissions/{submission['id']}/detection")
+            f"{API_PREFIX}/admin/submissions/{submission['id']}/detection")
         assert r.status_code == 200, r.text
         assert r.json()["data"]["detected"] is True
 
     def test_a_non_admin_cannot_use_the_admin_route(self, client, submission,
                                                     fake_run, enabled):
         fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         assert client.get(
-            f"/admin/submissions/{submission['id']}/detection").status_code == 403
+            f"{API_PREFIX}/admin/submissions/{submission['id']}/detection").status_code == 403
 
     def test_the_admin_route_never_starts_a_run(self, client, admin_client,
                                                 submission, fake_run, enabled):
         """Read-only by design: an admin working a queue must not be able to
         spend 30 s of CPU per row."""
         calls = fake_run()
-        client.post(f"/portal/submissions/{submission['id']}/detect")
+        client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         before = len(calls)
-        admin_client.get(f"/admin/submissions/{submission['id']}/detection")
+        admin_client.get(f"{API_PREFIX}/admin/submissions/{submission['id']}/detection")
         assert len(calls) == before
 
     def test_the_admin_route_reports_not_run_rather_than_404(self, client,
@@ -614,7 +615,7 @@ class TestDetectionAuthorisation:
         """The submission exists; it simply has no result. Conflating those
         would suggest the submission is missing."""
         r = admin_client.get(
-            f"/admin/submissions/{submission['id']}/detection")
+            f"{API_PREFIX}/admin/submissions/{submission['id']}/detection")
         assert r.status_code == 200
         assert r.json()["data"]["detected"] is False
 
@@ -691,11 +692,11 @@ class TestOpenAPI:
     @pytest.mark.parametrize(
         "path, method",
         [
-            ("/portal/submissions/{inspection_id}/detect", "post"),
-            ("/portal/submissions/{inspection_id}/detection", "get"),
-            ("/portal/submissions/{inspection_id}/detection/overlay", "get"),
-            ("/portal/detection/availability", "get"),
-            ("/admin/submissions/{inspection_id}/detection", "get"),
+            (API_PREFIX + "/portal/submissions/{inspection_id}/detect", "post"),
+            (API_PREFIX + "/portal/submissions/{inspection_id}/detection", "get"),
+            (API_PREFIX + "/portal/submissions/{inspection_id}/detection/overlay", "get"),
+            (API_PREFIX + "/portal/detection/availability", "get"),
+            (API_PREFIX + "/admin/submissions/{inspection_id}/detection", "get"),
         ],
     )
     def test_detection_routes_are_documented_and_locked(self, client, path,
@@ -709,5 +710,5 @@ class TestOpenAPI:
         """A 30-second synchronous call must say so, or every caller is
         surprised by it."""
         op = client.get("/openapi.json").json()["paths"][
-            "/portal/submissions/{inspection_id}/detect"]["post"]
+            API_PREFIX + "/portal/submissions/{inspection_id}/detect"]["post"]
         assert "16-45" in op["description"] or "blocks" in op["description"]

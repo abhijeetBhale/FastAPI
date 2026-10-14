@@ -6,27 +6,29 @@ guessed. If one fails, the bug is back.
 
 from __future__ import annotations
 
+from api import API_PREFIX
+
 
 class TestPaginationBounds:
     """`per_page=-5` used to reach PostgreSQL and surface as a 500."""
 
     def test_negative_limit_is_422(self, admin_client):
-        assert admin_client.get("/admin/submissions?per_page=-5").status_code == 422
+        assert admin_client.get(API_PREFIX + "/admin/submissions?per_page=-5").status_code == 422
 
     def test_negative_skip_is_422(self, admin_client):
-        assert admin_client.get("/admin/submissions?page=0").status_code == 422
+        assert admin_client.get(API_PREFIX + "/admin/submissions?page=0").status_code == 422
 
     def test_zero_limit_is_422(self, admin_client):
-        assert admin_client.get("/admin/submissions?per_page=0").status_code == 422
+        assert admin_client.get(API_PREFIX + "/admin/submissions?per_page=0").status_code == 422
 
     def test_absurd_limit_is_422_not_the_whole_table(self, admin_client):
-        assert admin_client.get("/admin/submissions?per_page=999999").status_code == 422
+        assert admin_client.get(API_PREFIX + "/admin/submissions?per_page=999999").status_code == 422
 
     def test_non_numeric_is_422(self, admin_client):
-        assert admin_client.get("/admin/submissions?page=abc").status_code == 422
+        assert admin_client.get(API_PREFIX + "/admin/submissions?page=abc").status_code == 422
 
     def test_valid_bounds_accepted(self, admin_client):
-        assert admin_client.get("/admin/submissions?page=1&per_page=100").status_code == 200
+        assert admin_client.get(API_PREFIX + "/admin/submissions?page=1&per_page=100").status_code == 200
 
 
 class TestNameLength:
@@ -34,7 +36,7 @@ class TestNameLength:
 
     def test_name_longer_than_column_is_422(self, admin_client):
         r = admin_client.post(
-            "/auth/register",
+            API_PREFIX + "/auth/register",
             json={"name": "x" * 80, "email": "long@example.com",
                   "password": "quay-crane-42"},
         )
@@ -42,7 +44,7 @@ class TestNameLength:
 
     def test_name_at_the_limit_is_accepted(self, admin_client, png_bytes):
         r = admin_client.post(
-            "/auth/register",
+            API_PREFIX + "/auth/register",
             json={"name": "y" * 50, "email": "ok50@example.com",
                   "password": "quay-crane-42"},
         )
@@ -54,7 +56,7 @@ class TestCaseInsensitiveEmail:
 
     def test_duplicate_email_different_case_is_rejected(self, admin_client):
         assert admin_client.post(
-            "/auth/register",
+            API_PREFIX + "/auth/register",
             json={"name": "A", "email": "Dup@Example.com",
                   "password": "quay-crane-42"},
         ).status_code == 201
@@ -62,7 +64,7 @@ class TestCaseInsensitiveEmail:
         # Caught by the service's case-insensitive lookup, so it is a 400 with
         # a clear message. The DB index is the safety net for concurrent writes.
         r = admin_client.post(
-            "/auth/register",
+            API_PREFIX + "/auth/register",
             json={"name": "B", "email": "dup@example.com",
                   "password": "quay-crane-42"},
         )
@@ -70,7 +72,7 @@ class TestCaseInsensitiveEmail:
 
     def test_lowercase_normalisation_is_visible(self, admin_client):
         r = admin_client.post(
-            "/auth/register",
+            API_PREFIX + "/auth/register",
             json={"name": "Norm", "email": "MixedCase@Example.COM",
                   "password": "quay-crane-42"},
         )
@@ -100,17 +102,17 @@ class TestCaseInsensitiveEmail:
 
     def test_inspection_reuses_user_regardless_of_case(self, admin_client, png_bytes):
         first = admin_client.post(
-            "/auth/register",
+            API_PREFIX + "/auth/register",
             json={"name": "Case", "email": "Case@Example.com",
                   "password": "quay-crane-42"},
         )
         uid = first.json()["data"]["user"]["id"]
         # Register signs the client in as Case; sign back in as admin.
-        admin_client.post("/auth/login", json={"email": "admin@example.com",
+        admin_client.post(API_PREFIX + "/auth/login", json={"email": "admin@example.com",
                                                "password": "quay-crane-42"})
 
         r = admin_client.post(
-            "/admin/submissions",
+            API_PREFIX + "/admin/submissions",
             data={"name": "case", "email": "CASE@EXAMPLE.COM",
                   "cargo_type": "scrap-steel"},
             files={"image": ("a.png", png_bytes(), "image/png")},
@@ -147,39 +149,39 @@ class TestFormattingContract:
     """
 
     def _submission(self, client, png_bytes):
-        client.post("/auth/register", json={"name": "Fmt",
+        client.post(API_PREFIX + "/auth/register", json={"name": "Fmt",
                                             "email": "fmt@example.com",
                                             "password": "quay-crane-42"})
-        r = client.post("/portal/submissions", data={"cargo_type": "scrap-steel"},
+        r = client.post(API_PREFIX + "/portal/submissions", data={"cargo_type": "scrap-steel"},
                         files={"image": ("f.png", png_bytes(), "image/png")})
         assert r.status_code == 201, r.text
         return r
 
     def test_delete_is_idempotent_with_an_empty_body(self, client, png_bytes):
         iid = self._submission(client, png_bytes).json()["data"]["id"]
-        assert client.delete(f"/portal/submissions/{iid}").status_code == 204
+        assert client.delete(f"{API_PREFIX}/portal/submissions/{iid}").status_code == 204
         # Repeat delete: still 204, not 404 (§5) — and never a "null" body.
-        r = client.delete(f"/portal/submissions/{iid}")
+        r = client.delete(f"{API_PREFIX}/portal/submissions/{iid}")
         assert r.status_code == 204
         assert r.content == b""
 
     def test_admin_delete_is_idempotent(self, admin_client, png_bytes):
         created = admin_client.post(
-            "/admin/submissions",
+            API_PREFIX + "/admin/submissions",
             data={"name": "A", "email": "adm-fmt@example.com",
                   "cargo_type": "other"},
             files={"image": ("a.png", png_bytes(), "image/png")},
         )
         iid = created.json()["data"]["id"]
-        assert admin_client.delete(f"/admin/submissions/{iid}").status_code == 204
-        assert admin_client.delete(f"/admin/submissions/{iid}").status_code == 204
+        assert admin_client.delete(f"{API_PREFIX}/admin/submissions/{iid}").status_code == 204
+        assert admin_client.delete(f"{API_PREFIX}/admin/submissions/{iid}").status_code == 204
 
     def test_idempotent_replay_carries_the_header(self, client, png_bytes):
         self._submission(client, png_bytes)
         files = {"image": ("a.png", png_bytes(), "image/png")}
-        first = client.post("/portal/submissions", data={"cargo_type": "other"},
+        first = client.post(API_PREFIX + "/portal/submissions", data={"cargo_type": "other"},
                             files=files, headers={"Idempotency-Key": "fmt-key"})
-        second = client.post("/portal/submissions", data={"cargo_type": "other"},
+        second = client.post(API_PREFIX + "/portal/submissions", data={"cargo_type": "other"},
                              files=files, headers={"Idempotency-Key": "fmt-key"})
         assert first.status_code == 201
         assert first.headers.get("Idempotent-Replay") is None
@@ -187,7 +189,7 @@ class TestFormattingContract:
         assert second.json()["data"]["id"] == first.json()["data"]["id"]
 
     def test_405_carries_allow_and_a_problem_body(self, client):
-        r = client.put("/auth/login", json={})
+        r = client.put(API_PREFIX + "/auth/login", json={})
         assert r.status_code == 405
         assert "allow" in {k.lower() for k in r.headers}
         assert r.headers["content-type"].startswith("application/problem+json")
@@ -206,7 +208,7 @@ class TestFormattingContract:
 
     def test_image_url_matches_the_surface(self, client, png_bytes, admin_client):
         iid = self._submission(client, png_bytes).json()["data"]["id"]
-        mine = client.get(f"/portal/submissions/{iid}").json()["data"]
-        assert mine["image_url"] == f"/portal/submissions/{iid}/image"
-        theirs = admin_client.get(f"/admin/submissions/{iid}").json()["data"]
-        assert theirs["image_url"] == f"/admin/submissions/{iid}/image"
+        mine = client.get(f"{API_PREFIX}/portal/submissions/{iid}").json()["data"]
+        assert mine["image_url"] == f"{API_PREFIX}/portal/submissions/{iid}/image"
+        theirs = admin_client.get(f"{API_PREFIX}/admin/submissions/{iid}").json()["data"]
+        assert theirs["image_url"] == f"{API_PREFIX}/admin/submissions/{iid}/image"

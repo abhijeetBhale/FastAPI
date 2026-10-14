@@ -27,6 +27,10 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 
+# The app's own base-path constant, so every request in the suite is built from
+# the same value the routes are registered with (see `api.py`).
+from api import API_PREFIX  # noqa: E402
+
 TEST_URL = os.environ["DATABASE_URL"]
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -158,7 +162,7 @@ def admin_client(db):
     db.commit()
 
     with TestClient(main.app, raise_server_exceptions=False) as c:
-        r = c.post("/auth/login",
+        r = c.post(API_PREFIX + "/auth/login",
                     json={"email": "admin@example.com", "password": "quay-crane-42"})
         assert r.status_code == 200, r.text
         yield c

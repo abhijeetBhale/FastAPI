@@ -50,6 +50,19 @@ class InspectionUpdate(BaseModel):
     tags: Optional[list[str]] = Field(default=None, max_length=20)
 
 
+class DecisionRequest(BaseModel):
+    """Reviewer note for a single approve/reject.
+
+    Sent as a JSON body rather than `?note=`: §5 reserves query parameters for
+    GET filtering/sorting/pagination, and every other mutation on this router
+    already carries a body (`BulkDecisionRequest`, `InspectionUpdate`). The
+    admin UI was already sending `{"note": …}` in the body, so a query-only
+    parameter silently discarded it.
+    """
+
+    note: Optional[str] = Field(default=None, max_length=300)
+
+
 class BulkDecisionRequest(BaseModel):
     """Batch approve/reject. Each id is processed independently — one bad
     row does not abort the batch, the response reports per-item outcomes."""

@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from api import API_PREFIX
 from database import get_db
 from models.inspection import Inspection
 from models.user import User
@@ -108,7 +109,7 @@ def portal_submissions(
         search=search,
         sort=sort,
     )
-    items = [inspection_dump(i, base="/portal/submissions")
+    items = [inspection_dump(i, base=f"{API_PREFIX}/portal/submissions")
              for i in result.items]
     total_pages = -(-result.total // limit) if limit else 0
     return envelope(
@@ -120,7 +121,7 @@ def portal_submissions(
             total_pages=total_pages,
         ),
         links=list_links(
-            base_path="/portal/submissions",
+            base_path=f"{API_PREFIX}/portal/submissions",
             page=page,
             per_page=limit,
             total_pages=total_pages,
@@ -167,7 +168,7 @@ async def portal_create_submission(
                 status_code=replay.status_code,
                 content=envelope(
                     stored,
-                    links={"self": f"/portal/submissions/{stored['id']}"},
+                    links={"self": f"{API_PREFIX}/portal/submissions/{stored['id']}"},
                 ),
                 headers={"Idempotent-Replay": "true"},
             )
@@ -206,11 +207,13 @@ async def portal_create_submission(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    body = inspection_dump(insp, base="/portal/submissions")
+    body = inspection_dump(insp, base=f"{API_PREFIX}/portal/submissions")
     if idempotency_key:
         idem.store(idempotency_key, "POST /portal/submissions", 201, body)
-    response.headers["Location"] = f"/portal/submissions/{insp.id}"
-    return envelope(body, links={"self": f"/portal/submissions/{insp.id}"})
+    response.headers["Location"] = f"{API_PREFIX}/portal/submissions/{insp.id}"
+    return envelope(
+        body, links={"self": f"{API_PREFIX}/portal/submissions/{insp.id}"}
+    )
 
 
 @portal.get(
@@ -228,8 +231,8 @@ def portal_submission_detail(
             status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found"
         )
     return envelope(
-        inspection_dump(insp, base="/portal/submissions"),
-        links={"self": f"/portal/submissions/{insp.id}"},
+        inspection_dump(insp, base=f"{API_PREFIX}/portal/submissions"),
+        links={"self": f"{API_PREFIX}/portal/submissions/{insp.id}"},
     )
 
 

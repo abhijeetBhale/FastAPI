@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -25,3 +25,19 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[PhoneNumber] = None
     is_active: Optional[bool] = None
+
+
+class UserRoleUpdate(BaseModel):
+    """An admin changing someone else's role — `PATCH /admin/users/{id}`.
+
+    Just `role`, and required: this is a partial update of an existing
+    resource, so the method is `PATCH` on the user, not `POST` on a
+    `/role` sub-path (see docs/API_CONVENTIONS.md §5, which rejects
+    POST-for-update). The other `UserUpdate` fields are self-service edits
+    with a different permission and a different audit action.
+
+    A missing `role` is a 422 from this schema rather than a hand-rolled
+    check in the handler.
+    """
+
+    role: Literal["user", "admin"]

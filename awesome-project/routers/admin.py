@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from api import API_PREFIX
 from database import get_db, utcnow
 from models.audit_log import AuditLog
 from models.cargo_type import CargoType
@@ -32,7 +33,13 @@ from schemas.responses.inspection import (
     InspectionSummary,
     inspection_dump,
 )
-from schemas.requests.inspection import BulkDecisionRequest, InspectionCreate, InspectionUpdate
+from schemas.requests.inspection import (
+    BulkDecisionRequest,
+    DecisionRequest,
+    InspectionCreate,
+    InspectionUpdate,
+)
+from schemas.requests.user import UserRoleUpdate
 from schemas.responses.user import UserDetailResponse, UserResponse
 from schemas.errors import jsonable_errors
 from schemas.responses.envelope import envelope, list_links, pagination_meta
@@ -84,7 +91,7 @@ def list_all_submissions(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    items = [inspection_dump(i, base="/admin/submissions")
+    items = [inspection_dump(i, base=f"{API_PREFIX}/admin/submissions")
              for i in result.items]
     total_pages = -(-result.total // per_page) if per_page else 0
     return envelope(
@@ -96,7 +103,7 @@ def list_all_submissions(
             total_pages=total_pages,
         ),
         links=list_links(
-            base_path="/admin/submissions",
+            base_path=f"{API_PREFIX}/admin/submissions",
             page=page,
             per_page=per_page,
             total_pages=total_pages,
@@ -144,7 +151,9 @@ async def create_submission_admin(
                 status_code=replay.status_code,
                 content=envelope(
                     stored,
-                    links={"self": f"/admin/submissions/{stored['id']}"},
+                    links={
+                        "self": f"{API_PREFIX}/admin/submissions/{stored['id']}"
+                    },
                 ),
                 headers={"Idempotent-Replay": "true"},
             )
@@ -179,11 +188,13 @@ async def create_submission_admin(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    body = inspection_dump(insp, base="/admin/submissions")
+    body = inspection_dump(insp, base=f"{API_PREFIX}/admin/submissions")
     if idempotency_key:
         idem.store(idempotency_key, "POST /admin/submissions/", 201, body)
-    response.headers["Location"] = f"/admin/submissions/{insp.id}"
-    return envelope(body, links={"self": f"/admin/submissions/{insp.id}"})
+    response.headers["Location"] = f"{API_PREFIX}/admin/submissions/{insp.id}"
+    return envelope(
+        body, links={"self": f"{API_PREFIX}/admin/submissions/{insp.id}"}
+    )
 
 
 @router.get(
@@ -201,7 +212,7 @@ def pending_submissions(
     result = InspectionService(db).list_inspections(
         skip=skip, limit=per_page, status="submitted", sort="created_at"
     )
-    items = [inspection_dump(i, base="/admin/submissions")
+    items = [inspection_dump(i, base=f"{API_PREFIX}/admin/submissions")
              for i in result.items]
     total_pages = -(-result.total // per_page) if per_page else 0
     return envelope(
@@ -213,7 +224,7 @@ def pending_submissions(
             total_pages=total_pages,
         ),
         links=list_links(
-            base_path="/admin/submissions/pending",
+            base_path=f"{API_PREFIX}/admin/submissions/pending",
             page=page,
             per_page=per_page,
             total_pages=total_pages,
@@ -273,8 +284,8 @@ def get_any_submission(
     if not insp:
         raise HTTPException(status_code=404, detail="Submission not found")
     return envelope(
-        inspection_dump(insp, base="/admin/submissions"),
-        links={"self": f"/admin/submissions/{insp.id}"},
+        inspection_dump(insp, base=f"{API_PREFIX}/admin/submissions"),
+        links={"self": f"{API_PREFIX}/admin/submissions/{insp.id}"},
     )
 
 
@@ -318,8 +329,8 @@ def _decide(
     db.commit()
     db.refresh(insp)
     return envelope(
-        inspection_dump(insp, base="/admin/submissions"),
-        links={"self": f"/admin/submissions/{insp.id}"},
+        inspection_dump(insp, base=f"{API_PREFIX}/admin/submissions"),
+        links={"self": f"{API_PREFIX}/admin/submissions/{insp.id}"},
     )
 
 
@@ -329,11 +340,18 @@ def _decide(
 )
 def approve_submission(
     inspection_id: int,
-    note: Optional[str] = Query(None, max_length=300),
+    data: Optional[DecisionRequest] = None,
     admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
     db: Session = Depends(get_db),
 ):
-    return _decide(inspection_id, "approved", note, admin, db)
+    """`POST` because approving is a non-idempotent state transition (§5).
+
+    The optional note comes from the JSON body, not `?note=` — a mutation's
+    payload belongs in the body, and this is what the admin UI already sends.
+    """
+    return _decide(
+        inspection_id, "approved", data.note if data else None, admin, db
+    )
 
 
 @router.post(
@@ -342,11 +360,14 @@ def approve_submission(
 )
 def reject_submission(
     inspection_id: int,
-    note: Optional[str] = Query(None, max_length=300),
+    data: Optional[DecisionRequest] = None,
     admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
     db: Session = Depends(get_db),
 ):
-    return _decide(inspection_id, "rejected", note, admin, db)
+    """Same contract as approve: body carries the optional note."""
+    return _decide(
+        inspection_id, "rejected", data.note if data else None, admin, db
+    )
 
 
 @router.post("/submissions/bulk", summary="Approve or reject many at once")
@@ -405,8 +426,8 @@ def patch_submission(
     if not insp:
         raise HTTPException(status_code=404, detail="Submission not found")
     return envelope(
-        inspection_dump(insp, base="/admin/submissions"),
-        links={"self": f"/admin/submissions/{insp.id}"},
+        inspection_dump(insp, base=f"{API_PREFIX}/admin/submissions"),
+        links={"self": f"{API_PREFIX}/admin/submissions/{insp.id}"},
     )
 
 
@@ -441,7 +462,7 @@ def admin_submission_detection(
         raise HTTPException(status_code=404, detail="Submission not found")
     # The overlay has its own admin route, so the link is stamped with the
     # admin prefix rather than the owner-scoped portal one.
-    return _to_envelope(insp, overlay_base="/admin/submissions")
+    return _to_envelope(insp, overlay_base=f"{API_PREFIX}/admin/submissions")
 
 
 @router.get(
@@ -515,8 +536,8 @@ def restore_submission(
     if not insp:
         raise HTTPException(status_code=404, detail="Not found or not deleted")
     return envelope(
-        inspection_dump(insp, base="/admin/submissions"),
-        links={"self": f"/admin/submissions/{insp.id}"},
+        inspection_dump(insp, base=f"{API_PREFIX}/admin/submissions"),
+        links={"self": f"{API_PREFIX}/admin/submissions/{insp.id}"},
     )
 
 
@@ -641,7 +662,7 @@ def read_audit(
             total_pages=total_pages,
         ),
         links=list_links(
-            base_path="/admin/audit",
+            base_path=f"{API_PREFIX}/admin/audit",
             page=page,
             per_page=per_page,
             total_pages=total_pages,
@@ -690,7 +711,7 @@ def list_users_admin(
             total_pages=total_pages,
         ),
         links=list_links(
-            base_path="/admin/users",
+            base_path=f"{API_PREFIX}/admin/users",
             page=page,
             per_page=per_page,
             total_pages=total_pages,
@@ -716,18 +737,28 @@ def get_user_admin(
             **UserResponse.model_validate(user).model_dump(),
             inspection_count=svc.get_inspection_count(user_id),
         ).model_dump(mode="json"),
-        links={"self": f"/admin/users/{user.id}"},
+        links={"self": f"{API_PREFIX}/admin/users/{user.id}"},
     )
 
 
-@router.post("/users/{user_id}/role")
-def set_role(
+@router.patch(
+    "/users/{user_id}",
+    summary="Change a user's role (admin only)",
+)
+def update_user_role(
     user_id: int,
-    role: str = Query(..., pattern="^(user|admin)$"),
+    data: UserRoleUpdate,
     admin: User = Depends(require_permission(P_USERS_MANAGE)),
     db: Session = Depends(get_db),
 ):
-    if user_id == admin.id and role == "user":
+    """Change one user's role.
+
+    `PATCH` on the user rather than `POST /users/{id}/role`: this changes part
+    of an existing resource, and §5 rejects POST-for-update. The permission
+    (`users:manage`), the self-demotion guard and the `set_role` audit action
+    are unchanged — only the method and where `role` is carried.
+    """
+    if user_id == admin.id and data.role == "user":
         # Guard against an admin demoting themselves and locking everyone out.
         raise HTTPException(
             status_code=400,
@@ -736,14 +767,14 @@ def set_role(
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    user.role = role
+    user.role = data.role
     AuditService(db).record(
         action="set_role", entity_type="user", entity_id=user.id,
-        actor_user_id=admin.id, detail={"role": role},
+        actor_user_id=admin.id, detail={"role": data.role},
     )
     db.commit()
     db.refresh(user)
     return envelope(
         UserResponse.model_validate(user).model_dump(mode="json"),
-        links={"self": f"/admin/users/{user.id}"},
+        links={"self": f"{API_PREFIX}/admin/users/{user.id}"},
     )

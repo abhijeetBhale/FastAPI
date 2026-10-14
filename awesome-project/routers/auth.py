@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
+from api import API_PREFIX
 from config import get_settings
 from database import get_db
 from models.user import User
@@ -65,13 +66,13 @@ def register(
     settings = get_settings()
     token = create_access_token(user)
     set_session_cookie(response, token, expires_hours=settings.jwt_expires_hours)
-    response.headers["Location"] = "/auth/me"
+    response.headers["Location"] = f"{API_PREFIX}/auth/me"
     return envelope(
         LoginResponse(
             user=_current_payload(user, db),
             expires_in_hours=settings.jwt_expires_hours,
         ).model_dump(mode="json"),
-        links={"self": "/auth/me"},
+        links={"self": f"{API_PREFIX}/auth/me"},
     )
 
 
@@ -92,7 +93,7 @@ def login(
             user=_current_payload(user, db),
             expires_in_hours=settings.jwt_expires_hours,
         ).model_dump(mode="json"),
-        links={"self": "/auth/me"},
+        links={"self": f"{API_PREFIX}/auth/me"},
     )
 
 
@@ -118,7 +119,7 @@ def me(user: User = Depends(require_current_user), db: Session = Depends(get_db)
             permissions=permissions_for(user),
             is_admin=user.role == "admin",
         ).model_dump(mode="json"),
-        links={"self": "/auth/me"},
+        links={"self": f"{API_PREFIX}/auth/me"},
     )
 
 

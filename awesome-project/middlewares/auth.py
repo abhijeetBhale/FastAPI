@@ -17,15 +17,22 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from api import API_PREFIX
 from errors import problem
 from services.security import COOKIE_NAME, decode_access_token
 
 logger = logging.getLogger("app.auth")
 
 #: Prefixes that require a valid session credential.
+#:
+#: These must move in lockstep with the routes themselves: an unlisted prefix is
+#: public, so a route that moves to `/api/v1` while this list still says
+#: `/portal` would be routed *without* the middleware ever looking at it. The
+#: route-level dependencies would still refuse most of it, which is exactly why
+#: the mistake would be quiet. `tests/test_api_prefix.py` pins the pairing.
 PROTECTED_PREFIXES: tuple[str, ...] = (
-    "/portal",
-    "/admin",
+    f"{API_PREFIX}/portal",
+    f"{API_PREFIX}/admin",
 )
 
 _BEARER_PREFIX = "bearer "
@@ -53,7 +60,7 @@ def extract_token(request: Request) -> str | None:
 #: expired session can be refreshed rather than dead-ending.
 PUBLIC_EXCEPTIONS: frozenset[str] = frozenset(
     {
-        "/admin/login-as",  # reserved for future use
+        f"{API_PREFIX}/admin/login-as",  # reserved for future use
     }
 )
 
@@ -61,10 +68,11 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 def is_protected(path: str) -> bool:
+    """Segment-aware match, deliberately: `startswith(prefix)` alone would also
+    capture `/api/v1/administration`, protecting paths that are not ours."""
     if path in PUBLIC_EXCEPTIONS:
         return False
-    return any(path == p or path.startswith(p + "/") or path.startswith(p)
-               for p in PROTECTED_PREFIXES)
+    return any(path == p or path.startswith(p + "/") for p in PROTECTED_PREFIXES)
 
 
 class AuthenticationMiddleware(BaseHTTPMiddleware):
