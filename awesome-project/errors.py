@@ -56,6 +56,7 @@ def problem(
     code: Optional[str] = None,
     errors: Optional[list] = None,
     extra: Optional[dict] = None,
+    headers: Optional[dict] = None,
 ) -> JSONResponse:
     """Build an RFC 9457 problem response.
 
@@ -80,6 +81,10 @@ def problem(
         status_code=http_status,
         content=body,
         media_type="application/problem+json",
+        # RFC 9110 headers raised with the exception — notably `Allow` on a
+        # 405 (docs/API_CONVENTIONS.md §5 requires it). Dropped headers would
+        # silently disappear because this response replaces the default one.
+        headers=headers,
     )
 
 
@@ -102,7 +107,9 @@ def register_exception_handlers(app: FastAPI) -> None:
             detail = message if message else "Request failed."
         if not isinstance(detail, str):
             detail = str(detail)
-        return problem(status_code, detail, code=code, extra=extra)
+        return problem(
+            status_code, detail, code=code, extra=extra, headers=exc.headers
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError):

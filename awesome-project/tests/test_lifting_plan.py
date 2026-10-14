@@ -202,7 +202,7 @@ class TestCalibration:
 # ---- json format ---------------------------------------------------------
 class TestJson:
     def test_same_data_structured(self, client, submission, plan_url):
-        data = client.get(f"{plan_url}?format=json").json()
+        data = client.get(f"{plan_url}?format=json").json()["data"]
         assert data["inspection_id"] == submission["id"]
         assert data["detection_status"] == "detected"
         assert data["description"] == "2 × Cargo-Box (Scrap Steel)"
@@ -212,11 +212,12 @@ class TestJson:
 
     def test_reference_computes_weight_in_json(self, client, plan_url):
         data = client.get(
-            f"{plan_url}?ref_m=2.43&ref_px=410&format=json").json()
+            f"{plan_url}?ref_m=2.43&ref_px=410&format=json").json()["data"]
         assert data["dimensions"]["source"] == "estimated"
         assert data["dimensions"]["l_m"] == 0.85
         assert data["dimensions"]["h_m"] == 1.02
-        assert data["dimensions"]["w_m"] is None
+        # Null keys are omitted (§6), so `w_m` is absent — not explicit null.
+        assert data["dimensions"].get("w_m") is None
         assert data["weight"]["source"] == "estimate"
         assert data["weight"]["kg"] > 0
         assert data["warnings"]  # estimate warning present
@@ -225,7 +226,7 @@ class TestJson:
 # ---- theoretical rigging model (Option 2) --------------------------------
 class TestRigging:
     def test_cog_is_geometric_centre(self, client, plan_url):
-        data = client.get(f"{plan_url}?format=json").json()
+        data = client.get(f"{plan_url}?format=json").json()["data"]
         rig = data["rigging"]
         assert rig["available"] is True
         # box [52, 287, 196, 459] → centre (124, 373)
@@ -235,7 +236,7 @@ class TestRigging:
         assert rig["cog"]["tag"] == "AI-THEORETICAL"
 
     def test_hook_placement_geometry(self, client, plan_url):
-        data = client.get(f"{plan_url}?format=json").json()
+        data = client.get(f"{plan_url}?format=json").json()["data"]
         hook = data["rigging"]["hook"]
         # w = 72, h = 172, L = 2.0 × 172 = 344
         # r = √(344² − 72²) = √(118336 − 5184) = √113152 ≈ 336.4
@@ -250,12 +251,12 @@ class TestRigging:
         assert hook["tag"] == "AI-THEORETICAL"
 
     def test_attachment_points_are_top_corners(self, client, plan_url):
-        data = client.get(f"{plan_url}?format=json").json()
+        data = client.get(f"{plan_url}?format=json").json()["data"]
         pts = data["rigging"]["hook"]["attachment_points_px"]
         assert pts == [[52.0, 287.0], [196.0, 287.0]]
 
     def test_assumptions_are_stated(self, client, plan_url):
-        data = client.get(f"{plan_url}?format=json").json()
+        data = client.get(f"{plan_url}?format=json").json()["data"]
         assumptions = data["rigging"]["assumptions"]
         assert len(assumptions) >= 4
         joined = " ".join(assumptions).lower()
@@ -296,6 +297,6 @@ class TestRigging:
 
         data = client.get(
             f"/portal/submissions/{insp['id']}/lifting_plan?format=json"
-        ).json()
+        ).json()["data"]
         assert data["rigging"]["available"] is False
         assert "reason" in data["rigging"]

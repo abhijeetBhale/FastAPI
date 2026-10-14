@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from sqlalchemy import String, Integer, DateTime, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
-from database import Base
+from database import Base, utcnow
 
 if TYPE_CHECKING:
     from .user import User
@@ -34,7 +34,7 @@ class AuditLog(Base):
     entity_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     detail: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now()
+        DateTime, nullable=False, default=utcnow
     )
 
     def __repr__(self) -> str:

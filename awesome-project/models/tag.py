@@ -4,7 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import String, Integer, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from database import Base
+from database import Base, utcnow
 
 if TYPE_CHECKING:  # avoids a circular import at runtime
     from .inspection import Inspection
@@ -19,7 +19,7 @@ class Tag(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     colour: Mapped[str | None] = mapped_column(String(7), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now()
+        DateTime, nullable=False, default=utcnow
     )
 
     # The other side of the many-to-many.

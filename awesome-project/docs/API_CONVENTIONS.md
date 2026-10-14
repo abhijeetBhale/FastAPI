@@ -25,7 +25,7 @@ Every response uses this top-level shape:
 | `data` | Business payload. Object for single resources, array for collections. | Never |
 | `meta` | Pagination, timing, provenance, context. | When empty |
 | `links` | Related resource URLs (`self`, `overlay`, `next`/`prev` page). | When empty |
-| `error` | RFC 9457 problem object. | **Entirely on success** — never `null` |
+| `error` | RFC 9457 problem document (§4). | **Entirely on success** — never `null`. On failure the envelope is not used at all: the whole body *is* the problem document. |
 
 Rules:
 
@@ -295,16 +295,17 @@ Creates an account and signs in immediately.
 ```json
 {
   "data": {
-    "id": 7,
-    "name": "Ana",
-    "email": "ana@example.com",
-    "phone": "+919876543210",
-    "role": "user",
-    "created_at": "2026-10-13T16:06:16Z",
-    "inspection_count": 0,
-    "has_password": true
-  },
-  "meta": {
+    "message": "Signed in",
+    "user": {
+      "id": 7,
+      "name": "Ana",
+      "email": "ana@example.com",
+      "phone": "+919876543210",
+      "role": "user",
+      "created_at": "2026-10-13T16:06:16Z",
+      "inspection_count": 0,
+      "has_password": true
+    },
     "expires_in_hours": 12
   },
   "links": {
@@ -315,27 +316,27 @@ Creates an account and signs in immediately.
 
 | Field | Type | Required | Description | Example |
 |---|---|:--:|---|---|
-| `data.id` | int | ✅ | New user id | `7` |
-| `data.name` | string | ✅ | Display name | `"Ana"` |
-| `data.email` | string | ✅ | Lowercased email | `"ana@example.com"` |
-| `data.phone` | string | ❌ | Digits-only, 10–15 | `"+919876543210"` |
-| `data.role` | string | ✅ | Always `"user"` on register | `"user"` |
-| `data.created_at` | string | ✅ | ISO 8601 UTC | `"2026-10-13T16:06:16Z"` |
-| `data.inspection_count` | int | ✅ | Always `0` on register | `0` |
-| `data.has_password` | bool | ✅ | Always `true` on register | `true` |
-| `meta.expires_in_hours` | int | ✅ | Session lifetime | `12` |
+| `data.user.id` | int | ✅ | New user id | `7` |
+| `data.user.name` | string | ✅ | Display name | `"Ana"` |
+| `data.user.email` | string | ✅ | Lowercased email | `"ana@example.com"` |
+| `data.user.phone` | string | ❌ | Digits-only, 10–15; omitted if unset | `"+919876543210"` |
+| `data.user.role` | string | ✅ | Always `"user"` on register | `"user"` |
+| `data.user.created_at` | string | ✅ | ISO 8601 UTC | `"2026-10-13T16:06:16Z"` |
+| `data.user.inspection_count` | int | ✅ | Always `0` on register | `0` |
+| `data.user.has_password` | bool | ✅ | Always `true` on register | `true` |
+| `data.expires_in_hours` | int | ✅ | Session lifetime | `12` |
 | `links.self` | string | ✅ | | `"/auth/me"` |
 
-**Error 409** (duplicate email):
+**Error 409** (duplicate email) — the problem document is the entire body
+(`Content-Type: application/problem+json`), with no envelope and no wrapper:
 
 ```json
 {
-  "error": {
-    "type": "https://api.example.com/problems/duplicate-email",
-    "title": "Account Exists",
-    "status": 409,
-    "detail": "An account with that email already exists."
-  }
+  "type": "https://api.example.com/problems/conflict",
+  "title": "Conflict",
+  "status": 409,
+  "detail": "An account with that email already exists.",
+  "code": "duplicate_email"
 }
 ```
 
@@ -356,10 +357,14 @@ Exchanges credentials for a session cookie.
 ```json
 {
   "data": {
-    "id": 7,
-    "name": "Ana",
-    "email": "ana@example.com",
-    "role": "user"
+    "message": "Signed in",
+    "user": {
+      "id": 7,
+      "name": "Ana",
+      "email": "ana@example.com",
+      "role": "user"
+    },
+    "expires_in_hours": 12
   },
   "links": {
     "self": "/auth/me"
@@ -374,12 +379,10 @@ The token is never in the body.
 
 ```json
 {
-  "error": {
-    "type": "https://api.example.com/problems/invalid-credentials",
-    "title": "Authentication Failed",
-    "status": 401,
-    "detail": "Email or password is incorrect."
-  }
+  "type": "https://api.example.com/problems/authentication-required",
+  "title": "Authentication Required",
+  "status": 401,
+  "detail": "Email or password is incorrect."
 }
 ```
 
@@ -387,7 +390,11 @@ The token is never in the body.
 
 #### `POST /auth/logout` — 200
 
-Clears the session cookie. No body.
+Clears the session cookie.
+
+```json
+{ "data": { "detail": "Signed out" } }
+```
 
 ---
 
@@ -398,19 +405,24 @@ Bootstrap: the signed-in user and their permission list.
 ```json
 {
   "data": {
-    "id": 7,
-    "name": "Ana",
-    "email": "ana@example.com",
-    "phone": "+919876543210",
-    "role": "user",
-    "is_admin": false,
+    "user": {
+      "id": 7,
+      "name": "Ana",
+      "email": "ana@example.com",
+      "phone": "+919876543210",
+      "role": "user",
+      "created_at": "2026-10-13T16:06:16Z",
+      "inspection_count": 1,
+      "has_password": true
+    },
     "permissions": [
       "submissions:create",
       "submissions:read:own",
       "submissions:update:own",
       "submissions:withdraw:own",
       "users:read:own"
-    ]
+    ],
+    "is_admin": false
   },
   "links": {
     "self": "/auth/me"
@@ -420,11 +432,11 @@ Bootstrap: the signed-in user and their permission list.
 
 | Field | Type | Required | Description | Example |
 |---|---|:--:|---|---|
-| `data.id` | int | ✅ | User id | `7` |
-| `data.name` | string | ✅ | | `"Ana"` |
-| `data.email` | string | ✅ | | `"ana@example.com"` |
-| `data.phone` | string | ❌ | Omitted if unset | |
-| `data.role` | string | ✅ | `user` or `admin` | `"user"` |
+| `data.user.id` | int | ✅ | User id | `7` |
+| `data.user.name` | string | ✅ | | `"Ana"` |
+| `data.user.email` | string | ✅ | | `"ana@example.com"` |
+| `data.user.phone` | string | ❌ | Omitted if unset | |
+| `data.user.role` | string | ✅ | `user` or `admin` | `"user"` |
 | `data.is_admin` | bool | ✅ | Convenience over `role` | `false` |
 | `data.permissions` | array | ✅ | Permission strings | |
 
@@ -441,7 +453,10 @@ Bootstrap: the signed-in user and their permission list.
 }
 ```
 
-**Response 200**: `{ "data": { "id": 7 }, "links": { "self": "/auth/me" } }`
+**Response 200**: `{ "data": { "detail": "Password updated" } }`
+
+A wrong `current_password` is a 400; a weak `new_password` is a 422 with
+per-field `errors[]`.
 
 ---
 
@@ -450,6 +465,10 @@ Bootstrap: the signed-in user and their permission list.
 First password for an account that has none.
 
 **Request** (`application/json`): `{ "password": "quay-crane-42" }`
+
+**Response 200**: `{ "data": { "detail": "Password set" } }`
+
+400 if the account already has a password — use `change-password`.
 
 ---
 
@@ -544,12 +563,10 @@ Upload a new submission. `multipart/form-data`.
 
 ```json
 {
-  "error": {
-    "type": "https://api.example.com/problems/self-approval",
-    "title": "Self-Approval Forbidden",
-    "status": 403,
-    "detail": "You cannot set status 'approved'. Approval is done by an administrator."
-  }
+  "type": "https://api.example.com/problems/forbidden",
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "You cannot set status 'approved'. Choose one of: draft, submitted. Approval is done by an administrator."
 }
 ```
 
@@ -565,7 +582,8 @@ Single submission. Full field set including `tags`, `notes`, `reviewed_by`,
 
 #### `DELETE /portal/submissions/{id}` — 204
 
-Withdraw (soft-delete). Empty body.
+Withdraw (soft-delete). Empty body — no envelope, not even `null`.
+Idempotent: repeating the delete is still 204, not 404.
 
 ---
 
@@ -583,12 +601,10 @@ Run detection. Blocks 16–45 s. Returns the detection envelope (see §7.3).
 
 ```json
 {
-  "error": {
-    "type": "https://api.example.com/problems/detection-failed",
-    "title": "Detection Failed",
-    "status": 502,
-    "detail": "Detector exited with code 1 without a result."
-  }
+  "type": "https://api.example.com/problems/detection-failed",
+  "title": "Detection Failed",
+  "status": 502,
+  "detail": "Detector exited with code 1 without a result."
 }
 ```
 
@@ -657,6 +673,21 @@ Run detection. Blocks 16–45 s. Returns the detection envelope (see §7.3).
 
 ---
 
+#### `GET /portal/submissions/{id}/detection/log` — 200
+
+Detector stdout tail for the most recent run — for diagnosing a failed one.
+
+```json
+{
+  "data": { "inspection_id": 28, "returncode": 0, "stdout_tail": "[runner] OK" }
+}
+```
+
+`returncode` is `0` once a run exists and `1` before any run; the tail is
+empty when the run directory has since been swept by `cleanup_runs`.
+
+---
+
 #### `GET /portal/submissions/{id}/detection/overlay` — 200
 
 PNG bytes. 404 when nothing was detected.
@@ -669,6 +700,16 @@ Markdown document. `Content-Type: text/markdown; charset=utf-8`.
 `Content-Disposition: attachment; filename="lifting-plan-28.md"`.
 
 Query: `ref_m`, `ref_px`, `format` (`markdown`|`json`).
+
+With `format=json` the same data comes back enveloped, with `generated_at`
+moved to `meta` as ISO 8601 UTC:
+
+```json
+{
+  "data": { "inspection_id": 28, "detection_status": "detected", "…": "…" },
+  "meta": { "generated_at": "2026-10-13T16:06:16Z" }
+}
+```
 
 ---
 
@@ -769,12 +810,14 @@ Per-user aggregates.
       "approved_count": 0,
       "rejected_count": 0,
       "total_weight_kg": 0.0,
-      "average_weight_kg": null,
       "last_inspection_at": "2026-10-13T13:35:32Z"
     }
   ]
 }
 ```
+
+`average_weight_kg` is omitted while no weights exist — nulls are never
+emitted (§6).
 
 ---
 
@@ -806,7 +849,7 @@ Partial update. Body: `application/merge-patch+json` or `application/json`.
 
 #### `DELETE /admin/submissions/{id}` — 204
 
-Withdraw (soft-delete).
+Withdraw (soft-delete). Idempotent: repeating the delete is still 204.
 
 ---
 
@@ -824,12 +867,10 @@ Query: `note`. Sets `status=approved`, `reviewed_by`, `reviewed_at`.
 
 ```json
 {
-  "error": {
-    "type": "https://api.example.com/problems/already-decided",
-    "title": "Already Approved",
-    "status": 409,
-    "detail": "Already approved."
-  }
+  "type": "https://api.example.com/problems/conflict",
+  "title": "Conflict",
+  "status": 409,
+  "detail": "Already approved."
 }
 ```
 
@@ -996,12 +1037,10 @@ Query: `role` (`user`|`admin`).
 
 ```json
 {
-  "error": {
-    "type": "https://api.example.com/problems/self-demotion",
-    "title": "Cannot Self-Demote",
-    "status": 400,
-    "detail": "You cannot remove your own administrator role."
-  }
+  "type": "https://api.example.com/problems/bad-request",
+  "title": "Bad Request",
+  "status": 400,
+  "detail": "You cannot remove your own administrator role."
 }
 ```
 
@@ -1021,8 +1060,9 @@ Same as portal cargo-types.
 {
   "data": {
     "status": "ok",
+    "service": "Cargo Inspection API",
     "version": "2.0.0",
-    "database": "up"
+    "timestamp": "2026-10-13T16:06:16Z"
   }
 }
 ```
@@ -1034,16 +1074,23 @@ Same as portal cargo-types.
 ```json
 {
   "data": {
-    "ready": true,
-    "checks": {
-      "database": "up",
-      "disk": "ok"
-    }
+    "status": "ok",
+    "database": "up",
+    "latency_ms": 0.7
   }
 }
 ```
 
-503 when any check fails.
+503 when the database check fails — a problem document, not an envelope:
+
+```json
+{
+  "type": "https://api.example.com/problems/service-unavailable",
+  "title": "Service Unavailable",
+  "status": 503,
+  "detail": "psycopg: connection refused"
+}
+```
 
 ---
 
@@ -1719,6 +1766,10 @@ paths:
           content:
             text/markdown:
               schema: { type: string }
+            application/json:
+              description: Only with `format=json` — the same data enveloped
+              schema:
+                $ref: "#/components/schemas/Envelope"
         "422":
           $ref: "#/components/responses/Unprocessable"
 
@@ -2049,7 +2100,7 @@ paths:
       tags: [Admin]
       parameters:
         - { name: page, in: query, schema: { type: integer, default: 1 } }
-        - { name: per_page, in: query, schema: { type: integer, default: 20, maximum: 500 } }
+        - { name: per_page, in: query, schema: { type: integer, default: 50, maximum: 100 } }
         - { name: entity_type, in: query, schema: { type: string } }
         - { name: action, in: query, schema: { type: string } }
       responses:
@@ -2067,7 +2118,7 @@ paths:
       tags: [Admin]
       parameters:
         - { name: page, in: query, schema: { type: integer, default: 1 } }
-        - { name: per_page, in: query, schema: { type: integer, default: 100, maximum: 500 } }
+        - { name: per_page, in: query, schema: { type: integer, default: 100, maximum: 100 } }
       responses:
         "200":
           description: Paginated users

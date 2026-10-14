@@ -1,7 +1,8 @@
-from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+from schemas.responses.envelope import IsoDateTime
 
 
 class TagOut(BaseModel):
@@ -46,7 +47,7 @@ class InspectionResponse(BaseModel):
 
     # Populated only once an admin has decided.
     reviewed_by: Optional[int] = None
-    reviewed_at: Optional[datetime] = None
+    reviewed_at: Optional[IsoDateTime] = None
 
     volume_m3: Optional[float] = None
     estimated_weight_kg: Optional[float] = None
@@ -57,7 +58,7 @@ class InspectionResponse(BaseModel):
     # of boxes per image and would bloat every list response. Fetch it from
     # `GET /portal/submissions/{id}/detection`.
     detection_status: str = "not_run"
-    detected_at: Optional[datetime] = None
+    detected_at: Optional[IsoDateTime] = None
     cargo_object_count: int = 0
 
     image_filename: str
@@ -70,22 +71,23 @@ class InspectionResponse(BaseModel):
 
     tags: list[TagOut] = Field(default_factory=list)
 
-    created_at: datetime
-    updated_at: Optional[datetime] = None
+    created_at: IsoDateTime
+    updated_at: Optional[IsoDateTime] = None
 
     model_config = {"from_attributes": True}
 
 
-class InspectionListResponse(BaseModel):
-    """Paginated envelope — the total is needed to render page controls."""
+def inspection_dump(insp: InspectionResponse, *, base: str) -> dict:
+    """Serialise one submission with an `image_url` scoped to the surface.
 
-    items: list[InspectionResponse]
-    total: int
-    skip: int
-    limit: int
-    pages: int
-
-    model_config = {"from_attributes": True}
+    Owners and admins fetch images through different routes
+    (`/portal/submissions/{id}/image` vs `/admin/submissions/{id}/image`),
+    so a single model property cannot be right for both — the router stamps
+    its own base here instead.
+    """
+    body = InspectionResponse.model_validate(insp).model_dump(mode="json")
+    body["image_url"] = f"{base}/{body['id']}/image"
+    return body
 
 
 class InspectionSummary(BaseModel):
@@ -99,4 +101,4 @@ class InspectionSummary(BaseModel):
     rejected_count: int
     total_weight_kg: float
     average_weight_kg: Optional[float] = None
-    last_inspection_at: Optional[datetime] = None
+    last_inspection_at: Optional[IsoDateTime] = None

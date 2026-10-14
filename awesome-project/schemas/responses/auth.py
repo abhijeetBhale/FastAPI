@@ -1,7 +1,8 @@
-from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+from schemas.responses.envelope import IsoDateTime
 
 
 class CurrentUserResponse(BaseModel):
@@ -12,7 +13,7 @@ class CurrentUserResponse(BaseModel):
     email: str
     phone: Optional[str] = None
     role: str
-    created_at: datetime
+    created_at: IsoDateTime
 
     # Conveniences the portal uses to decide what to render.
     inspection_count: int = 0

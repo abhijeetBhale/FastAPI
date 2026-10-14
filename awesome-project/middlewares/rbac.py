@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
 from errors import problem
 from models.user import User
@@ -53,18 +53,15 @@ class RoleAuthorizationMiddleware(BaseHTTPMiddleware):
         # AuthenticationMiddleware already ran (it is outer) and attached the id.
         user_id = getattr(request.state, "user_id", None)
         if user_id is None:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Sign in to continue.",
-                         "code": "authentication_required"},
+            # RFC 9457 problem document like every other refusal — the tests
+            # pin the `code` extension member at the top level.
+            return problem(
+                401, "Sign in to continue.", code="authentication_required"
             )
 
         factory = getattr(request.app.state, "session_factory", None)
         if factory is None:  # pragma: no cover - misconfiguration
-            return JSONResponse(
-                status_code=500,
-                content={"detail": "Authorization is not configured."},
-            )
+            return problem(500, "Authorization is not configured.")
 
         db: Session = factory()
         try:

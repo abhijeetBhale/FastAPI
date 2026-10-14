@@ -21,18 +21,18 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import get_db, utcnow
 from models.audit_log import AuditLog
 from models.cargo_type import CargoType
 from models.inspection import INSPECTION_STATUSES, Inspection
 from models.user import User
 from schemas.responses.inspection import (
     CargoTypeOut,
-    InspectionListResponse,
     InspectionResponse,
     InspectionSummary,
+    inspection_dump,
 )
-from schemas.requests.inspection import InspectionCreate, InspectionUpdate
+from schemas.requests.inspection import BulkDecisionRequest, InspectionCreate, InspectionUpdate
 from schemas.responses.user import UserDetailResponse, UserResponse
 from schemas.errors import jsonable_errors
 from schemas.responses.envelope import envelope, list_links, pagination_meta
@@ -51,16 +51,6 @@ from services.rbac import (
 from services.user_service import UserService
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
-
-
-def _page(rows, total, skip, limit) -> InspectionListResponse:
-    return InspectionListResponse(
-        items=rows,
-        total=total,
-        skip=skip,
-        limit=limit,
-        pages=-(-total // limit) if limit else 0,
-    )
 
 
 # --------------------------------------------------------------------- #
@@ -94,7 +84,7 @@ def list_all_submissions(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    items = [InspectionResponse.model_validate(i).model_dump(mode="json")
+    items = [inspection_dump(i, base="/admin/submissions")
              for i in result.items]
     total_pages = -(-result.total // per_page) if per_page else 0
     return envelope(
@@ -148,12 +138,15 @@ async def create_submission_admin(
         replay = idem.lookup(idempotency_key, "POST /admin/submissions/")
         if replay is not None:
             stored = replay.response
+            # §5: a replay returns the cached response plus this header, so
+            # the client can tell a replay from a fresh create.
             return JSONResponse(
                 status_code=replay.status_code,
                 content=envelope(
                     stored,
                     links={"self": f"/admin/submissions/{stored['id']}"},
                 ),
+                headers={"Idempotent-Replay": "true"},
             )
 
     if status not in INSPECTION_STATUSES:
@@ -186,7 +179,7 @@ async def create_submission_admin(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    body = InspectionResponse.model_validate(insp).model_dump(mode="json")
+    body = inspection_dump(insp, base="/admin/submissions")
     if idempotency_key:
         idem.store(idempotency_key, "POST /admin/submissions/", 201, body)
     response.headers["Location"] = f"/admin/submissions/{insp.id}"
@@ -208,7 +201,7 @@ def pending_submissions(
     result = InspectionService(db).list_inspections(
         skip=skip, limit=per_page, status="submitted", sort="created_at"
     )
-    items = [InspectionResponse.model_validate(i).model_dump(mode="json")
+    items = [inspection_dump(i, base="/admin/submissions")
              for i in result.items]
     total_pages = -(-result.total // per_page) if per_page else 0
     return envelope(
@@ -280,7 +273,7 @@ def get_any_submission(
     if not insp:
         raise HTTPException(status_code=404, detail="Submission not found")
     return envelope(
-        InspectionResponse.model_validate(insp).model_dump(mode="json"),
+        inspection_dump(insp, base="/admin/submissions"),
         links={"self": f"/admin/submissions/{insp.id}"},
     )
 
@@ -312,7 +305,7 @@ def _decide(
     insp.status = new_status
     insp.status_note = (note or "").strip() or None
     insp.reviewed_by = admin.id
-    insp.reviewed_at = datetime.now()
+    insp.reviewed_at = utcnow()
     insp.updated_at = insp.reviewed_at
 
     AuditService(db).record(
@@ -325,7 +318,7 @@ def _decide(
     db.commit()
     db.refresh(insp)
     return envelope(
-        InspectionResponse.model_validate(insp).model_dump(mode="json"),
+        inspection_dump(insp, base="/admin/submissions"),
         links={"self": f"/admin/submissions/{insp.id}"},
     )
 
@@ -358,7 +351,7 @@ def reject_submission(
 
 @router.post("/submissions/bulk", summary="Approve or reject many at once")
 def bulk_decide(
-    payload: dict,
+    payload: BulkDecisionRequest,
     admin: User = Depends(require_permission(P_SUBMISSIONS_READ_ANY)),
     db: Session = Depends(get_db),
 ):
@@ -367,18 +360,13 @@ def bulk_decide(
     Each id is processed independently: one bad row does not abort the batch, and
     the response reports what happened to each.
     """
-    ids = payload.get("ids") or []
-    action = (payload.get("action") or "").lower()
-    note = payload.get("note")
-
-    if not isinstance(ids, list) or not ids:
-        raise HTTPException(status_code=422, detail="'ids' must be a non-empty list")
-    if action not in ("approve", "reject"):
-        raise HTTPException(status_code=422, detail="'action' must be approve or reject")
+    ids = payload.ids
+    action = payload.action
+    note = payload.note
 
     target = "approved" if action == "approve" else "rejected"
     results = []
-    for raw_id in ids[:200]:  # bound the work per request
+    for raw_id in ids:  # capped at 200 ids by the schema
         try:
             insp_id = int(raw_id)
         except (TypeError, ValueError):
@@ -417,7 +405,7 @@ def patch_submission(
     if not insp:
         raise HTTPException(status_code=404, detail="Submission not found")
     return envelope(
-        InspectionResponse.model_validate(insp).model_dump(mode="json"),
+        inspection_dump(insp, base="/admin/submissions"),
         links={"self": f"/admin/submissions/{insp.id}"},
     )
 
@@ -451,14 +439,9 @@ def admin_submission_detection(
     )
     if not insp:
         raise HTTPException(status_code=404, detail="Submission not found")
-    envelope = _to_envelope(insp)
-    # The overlay is served from the portal path, which is owner-scoped, so an
-    # admin is pointed at the admin route instead.
-    if envelope.meta.links and envelope.meta.links.overlay:
-        envelope.meta.links.overlay = (
-            f"/admin/submissions/{insp.id}/detection/overlay"
-        )
-    return envelope
+    # The overlay has its own admin route, so the link is stamped with the
+    # admin prefix rather than the owner-scoped portal one.
+    return _to_envelope(insp, overlay_base="/admin/submissions")
 
 
 @router.get(
@@ -532,7 +515,7 @@ def restore_submission(
     if not insp:
         raise HTTPException(status_code=404, detail="Not found or not deleted")
     return envelope(
-        InspectionResponse.model_validate(insp).model_dump(mode="json"),
+        inspection_dump(insp, base="/admin/submissions"),
         links={"self": f"/admin/submissions/{insp.id}"},
     )
 
@@ -549,9 +532,15 @@ def withdraw_submission_admin(
 ):
     """Hide the row without destroying it. Restorable, still listed with
     `include_deleted=true`, still counted out of aggregates — the same
-    withdraw semantics as the portal, applied cross-user."""
-    if not InspectionService(db).soft_delete(inspection_id):
+    withdraw semantics as the portal, applied cross-user.
+
+    DELETE is idempotent (§5): withdrawing an already-withdrawn submission
+    is still 204. Only a submission that never existed 404s."""
+    insp = db.get(Inspection, inspection_id)
+    if insp is None:
         raise HTTPException(status_code=404, detail="Submission not found")
+    if insp.deleted_at is None:
+        InspectionService(db).soft_delete(inspection_id)
 
 
 @router.delete(
@@ -611,7 +600,7 @@ def platform_stats(
 @router.get("/audit", summary="Recent audit entries")
 def read_audit(
     page: int = Query(1, ge=1),
-    per_page: int = Query(50, ge=1, le=200),
+    per_page: int = Query(50, ge=1, le=100),
     entity_type: Optional[str] = Query(None),
     action: Optional[str] = Query(None),
     admin: User = Depends(require_permission(P_AUDIT_READ)),
@@ -673,7 +662,10 @@ def list_cargo_types_admin(
     db: Session = Depends(get_db),
 ):
     """Admin counterpart of `/portal/cargo-types`."""
-    return envelope(InspectionService(db).list_cargo_types())
+    return envelope(
+        [CargoTypeOut.model_validate(c).model_dump(mode="json")
+         for c in InspectionService(db).list_cargo_types()]
+    )
 
 
 # users
@@ -681,7 +673,7 @@ def list_cargo_types_admin(
 @router.get("/users", summary="All users")
 def list_users_admin(
     page: int = Query(1, ge=1),
-    per_page: int = Query(100, ge=1, le=500),
+    per_page: int = Query(100, ge=1, le=100),
     admin: User = Depends(require_permission(P_USERS_MANAGE)),
     db: Session = Depends(get_db),
 ):

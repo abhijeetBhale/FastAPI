@@ -13,21 +13,22 @@ else returns **404, not 403**, so ids cannot be enumerated.
 Response envelope (see `schemas/responses/detection.py`):
 
 * Success: `{ "data": …, "meta": … }` — no `error` key.
-* Failure: `{ "error": { type, title, status, detail } }` — RFC 9457.
+* Failure: an RFC 9457 problem document as the entire body — `type`,
+  `title`, `status`, `detail` at the top level, exactly like every other
+  endpoint's failures (see `errors.problem()` and docs/API_CONVENTIONS.md §4).
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from config import get_settings
-from database import get_db
+from database import get_db, utcnow
+from errors import problem
 from models.inspection import Inspection
 from models.user import User
 from schemas.responses.detection import (
@@ -42,6 +43,7 @@ from schemas.responses.detection import (
     ModelBoxes,
     Rect,
 )
+from schemas.responses.envelope import envelope
 from services import detection
 from services.inspection_service import InspectionService, resolve_image_path
 from services.rbac import P_SUBMISSIONS_CREATE, require_permission
@@ -79,27 +81,21 @@ def _error_response(
 ) -> Response:
     """Build an RFC 9457 problem response.
 
-    `data` and `meta` are omitted on failure — the error object is the
-    entire body. The HTTP status code carries transport-level success;
-    the JSON body never needs a `success` flag.
+    The problem document IS the body — `type`/`title`/`status`/`detail` at
+    the top level with `Content-Type: application/problem+json`, exactly as
+    the app's global handlers render every other failure (see `errors.py` and
+    docs/API_CONVENTIONS.md §4). There is no envelope and no `success` flag;
+    the HTTP status code carries the outcome.
     """
-    return Response(
-        content=json.dumps({
-            "error": {
-                "type": type_uri,
-                "title": title,
-                "status": http_status,
-                "detail": detail,
-            }
-        }),
-        status_code=http_status,
-        media_type="application/problem+json",
-    )
+    return problem(http_status, detail, title=title, type_uri=type_uri)
 
 
 def _to_envelope(
-    insp: Inspection, payload: dict | None = None
-) -> DetectionResponse:
+    insp: Inspection,
+    payload: dict | None = None,
+    *,
+    overlay_base: str = "/portal/submissions",
+) -> dict:
     """Assemble the `{data, meta}` envelope from a stored or fresh result.
 
     `payload` wins when given, so a run that just completed is reflected
@@ -108,6 +104,9 @@ def _to_envelope(
     Flat arrays become self-describing Rect objects; related fields are
     grouped; derivable fields (`ok`, `status`, `reason`, `object_count`,
     `box_fraction_of_frame`, `has_overlay`) are dropped.
+
+    `overlay_base` is the router prefix the overlay is served from — the
+    portal and admin surfaces own different routes to the same PNG.
     """
     source = payload if payload is not None else (insp.detection_result or {})
     detected = bool(source.get("detected", False))
@@ -157,7 +156,7 @@ def _to_envelope(
     links = None
     if insp.detection_overlay or source.get("overlay"):
         links = Links(
-            overlay=f"/portal/submissions/{insp.id}/detection/overlay"
+            overlay=f"{overlay_base}/{insp.id}/detection/overlay"
         )
     meta = DetectionMeta(
         inspection_id=insp.id,
@@ -167,7 +166,8 @@ def _to_envelope(
         links=links,
     )
 
-    return DetectionResponse(data=data, meta=meta)
+    body = DetectionResponse(data=data, meta=meta).model_dump(mode="json")
+    return envelope(body["data"], meta=body["meta"])
 
 
 @router.get(
@@ -184,11 +184,13 @@ def detection_availability(
     """
     settings = get_settings()
     available, reason = detection.is_available()
-    return DetectionAvailability(
-        enabled=settings.detection_enabled,
-        available=available,
-        reason=reason,
-        timeout_seconds=settings.detection_timeout if available else None,
+    return envelope(
+        DetectionAvailability(
+            enabled=settings.detection_enabled,
+            available=available,
+            reason=reason,
+            timeout_seconds=settings.detection_timeout if available else None,
+        ).model_dump(mode="json")
     )
 
 
@@ -266,9 +268,9 @@ def detect_submission(
     # Stored whether or not the run succeeded, so a failure is inspectable
     # rather than a silently absent result.
     insp.detection_result = run.result
-    insp.detected_at = datetime.now()
+    insp.detected_at = utcnow()
     insp.detection_overlay = detection.persist_overlay(run, insp.id)
-    insp.updated_at = datetime.now()
+    insp.updated_at = utcnow()
     db.commit()
     db.refresh(insp)
 
@@ -320,10 +322,12 @@ def get_submission_detection_log(
     """
     insp = _load_owned(db, inspection_id, user)
     run_dir = (insp.detection_result or {}).get("run_dir", "")
-    return DetectionLog(
-        inspection_id=insp.id,
-        returncode=0 if insp.detection_result else 1,
-        stdout_tail=detection.run_stdout_log(run_dir),
+    return envelope(
+        DetectionLog(
+            inspection_id=insp.id,
+            returncode=0 if insp.detection_result else 1,
+            stdout_tail=detection.run_stdout_log(run_dir),
+        ).model_dump(mode="json")
     )
 
 

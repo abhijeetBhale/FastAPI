@@ -28,7 +28,13 @@ class LoginRequest(BaseModel):
 
 
 class SetPasswordRequest(BaseModel):
-    """First-time password setup, or a reset for an existing account."""
+    """First-time password setup for an account that has none."""
 
     password: str = Field(min_length=8, max_length=128)
-    new_password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+
+
+class ChangePasswordRequest(BaseModel):
+    """Rotate an existing password."""
+
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)

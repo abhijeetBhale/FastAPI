@@ -4,7 +4,7 @@ from typing import Any, Optional
 from sqlalchemy import String, Integer, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
-from database import Base
+from database import Base, utcnow
 
 
 class IdempotencyKey(Base):
@@ -21,7 +21,7 @@ class IdempotencyKey(Base):
     status_code: Mapped[int] = mapped_column(Integer, nullable=False)
     response: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now()
+        DateTime, nullable=False, default=utcnow
     )
     expires_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True, index=True

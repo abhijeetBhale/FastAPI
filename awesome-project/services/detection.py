@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from config import get_settings
+from database import utcnow
 
 logger = logging.getLogger("app.detection")
 
@@ -138,7 +139,7 @@ def run_detection(image_path: Path, *, timeout: int | None = None) -> DetectionR
         raise FileNotFoundError(f"Image not found: {image_path}")
 
     limit = timeout if timeout is not None else settings.detection_timeout
-    run_dir = WORK_ROOT / f"run_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+    run_dir = WORK_ROOT / f"run_{utcnow():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     env = dict(os.environ)
@@ -160,7 +161,7 @@ def run_detection(image_path: Path, *, timeout: int | None = None) -> DetectionR
     ]
 
     logger.info("detection: starting run %s", run_dir.name)
-    started = datetime.now()
+    started = utcnow()
 
     if not _run_lock.acquire(blocking=False):
         raise DetectionUnavailable(
@@ -199,7 +200,7 @@ def run_detection(image_path: Path, *, timeout: int | None = None) -> DetectionR
     finally:
         _run_lock.release()
 
-    elapsed = (datetime.now() - started).total_seconds()
+    elapsed = (utcnow() - started).total_seconds()
     tail = output[-MAX_CAPTURED_OUTPUT:]
 
     result_file = run_dir / "result.json"

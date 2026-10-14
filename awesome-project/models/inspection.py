@@ -13,7 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from database import Base
+from database import Base, utcnow
 
 if TYPE_CHECKING:  # avoids circular imports at runtime
     from .cargo_type import CargoType
@@ -139,7 +139,7 @@ class Inspection(Base):
     # Indexed via the partial `ix_inspections_created_at_live` below, plus the
     # full-column index created in migration 0008 for non-soft-deleted queries.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now()
+        DateTime, nullable=False, default=utcnow
     )
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Soft delete: rows are hidden, not destroyed.

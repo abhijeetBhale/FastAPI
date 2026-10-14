@@ -12,7 +12,7 @@ should fail.
 The split that matters:
 
 * a **refusal** (`detected: false`) is a *success* â€” 200, result stored;
-* a **broken detector** is a *failure* â€” 502 + RFC 9457 error envelope;
+* a **broken detector** is a *failure* â€” 502 + an RFC 9457 problem document (the whole body, no wrapper);
 * **disabled or misconfigured** is *unavailable* â€” 503, before any work starts.
 """
 
@@ -181,9 +181,9 @@ class TestAvailability:
         monkeypatch.setattr(get_settings(), "detection_enabled", False)
         r = authed.get("/portal/detection/availability")
         assert r.status_code == 200
-        assert r.json()["enabled"] is False
-        assert r.json()["available"] is False
-        assert "DETECTION_ENABLED" in r.json()["reason"]
+        assert r.json()["data"]["enabled"] is False
+        assert r.json()["data"]["available"] is False
+        assert "DETECTION_ENABLED" in r.json()["data"]["reason"]
 
     def test_the_default_is_off(self):
         """A fresh install must not change the upload path until someone opts
@@ -201,8 +201,8 @@ class TestAvailability:
         letting a caller assume they are coming."""
         monkeypatch.setattr(detection, "is_available", lambda: (True, "ready"))
         body = authed.get("/portal/detection/availability").json()
-        assert body["available"] is True
-        assert body["supports_measurement"] is False
+        assert body["data"]["available"] is True
+        assert body["data"]["supports_measurement"] is False
 
     def test_a_missing_interpreter_is_explained(self, monkeypatch):
         from config import get_settings
@@ -323,7 +323,8 @@ class TestDetect:
         data = r.json()["data"]
         assert data["detected"] is False
         assert data["aggregate_score"] == 3.3
-        assert data["label"] is None
+        # Null keys are omitted (§6): a refusal simply has no label.
+        assert data.get("label") is None
         assert "error" not in r.json()
 
     def test_a_refusal_is_still_persisted(self, client, submission, fake_run,
@@ -349,13 +350,12 @@ class TestDetect:
 
         assert r.status_code == 502
         body = r.json()
-        assert "error" in body
         assert "data" not in body
-        err = body["error"]
-        assert err["type"].startswith("https://")
-        assert err["title"] == "Detection Failed"
-        assert err["status"] == 502
-        assert "detail" in err
+        # RFC 9457 (§4): the problem document IS the body — no wrapper.
+        assert body["type"].startswith("https://")
+        assert body["title"] == "Detection Failed"
+        assert body["status"] == 502
+        assert "detail" in body
         # The failure is kept, so it can be inspected rather than vanishing.
         insp = db.get(Inspection, submission["id"])
         assert insp.detection_result is not None
@@ -376,7 +376,7 @@ class TestDetect:
 
         r = client.post(f"/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 503
-        err = r.json()["error"]
+        err = r.json()
         assert err["title"] == "Detection Unavailable"
         assert err["status"] == 503
         assert "DETECTION_ENABLED" in err["detail"]
@@ -403,7 +403,7 @@ class TestDetect:
         monkeypatch.setattr(detection, "run_detection", boom)
         r = client.post(f"/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 504
-        assert r.json()["error"]["title"] == "Detection Timeout"
+        assert r.json()["title"] == "Detection Timeout"
 
     def test_a_busy_detector_is_503(self, client, submission, monkeypatch, enabled):
         """The notebook is not reentrant, so overlap must be refused not raced."""
@@ -414,7 +414,7 @@ class TestDetect:
         monkeypatch.setattr(detection, "run_detection", busy)
         r = client.post(f"/portal/submissions/{submission['id']}/detect")
         assert r.status_code == 503
-        assert r.json()["error"]["title"] == "Detection Busy"
+        assert r.json()["title"] == "Detection Busy"
 
     def test_a_missing_image_file_is_404(self, client, submission, fake_run,
                                          enabled, db):

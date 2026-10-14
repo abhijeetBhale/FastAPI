@@ -1,7 +1,9 @@
 """Detection response shapes — three-part envelope.
 
 Success: `{ "data": …, "meta": … }` — no `error` key.
-Failure: `{ "error": { type, title, status, detail } }` — RFC 9457.
+Failure: an RFC 9457 problem document as the entire body, rendered by
+`errors.problem()` (`type`/`title`/`status`/`detail` at the top level,
+`Content-Type: application/problem+json`) — see docs/API_CONVENTIONS.md §4.
 
 `data` holds the business result (detection outcome, objects, geometry).
 `meta` holds provenance, timing, and image context. HTTP status codes
@@ -14,10 +16,11 @@ metadata the caller needs to make a decision.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+from schemas.responses.envelope import IsoDateTime
 
 
 # ---- envelope-only models (availability/log kept below) ---------------
@@ -127,65 +130,20 @@ class DetectionMeta(BaseModel):
     """Provenance, timing, and image context."""
 
     inspection_id: int
-    detected_at: Optional[datetime] = Field(
+    detected_at: Optional[IsoDateTime] = Field(
         default=None, description="ISO 8601 timestamp of detection"
     )
     elapsed_seconds: Optional[float] = Field(
         default=None, description="Pipeline wall-clock time in seconds"
     )
     image: Optional[ImageContext] = None
-    links: Optional[Links] = None
-
-
-# ---- envelopes -------------------------------------------------------------
-
+    links: Optional[Links] = None# ---- envelopes -------------------------------------------------------------
 class DetectionResponse(BaseModel):
     """Success envelope."""
 
     data: DetectionData
     meta: DetectionMeta
 
-
-class ProblemError(BaseModel):
-    """RFC 9457 problem object."""
-
-    type: str
-    title: str
-    status: int
-    detail: str
-
-
-class ErrorResponse(BaseModel):
-    """Failure envelope. `data` and `meta` are omitted."""
-
-    error: ProblemError
-
-
-class DetectionAvailability(BaseModel):
-    """Whether the detector can be used, and why not if it cannot."""
-
-    enabled: bool
-    available: bool
-    reason: str
-    timeout_seconds: Optional[int] = None
-    supports_measurement: bool = Field(
-        default=False,
-        description=(
-            "Always false. The pipeline's depth/volume/weight stage is not run: "
-            "its output is relative, not metric."
-        ),
-    )
-
-
-class DetectionLog(BaseModel):
-    """Tail of the detector's stdout. For diagnosing a failed run."""
-
-    inspection_id: int
-    returncode: int
-    stdout_tail: str
-
-
-# ---- auxiliary shapes ------------------------------------------------------
 
 class DetectionAvailability(BaseModel):
     """Whether the detector can be used, and why not if it cannot."""

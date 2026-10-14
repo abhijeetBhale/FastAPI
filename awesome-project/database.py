@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
@@ -25,6 +27,19 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Base class for all SQLAlchemy models
 class Base(DeclarativeBase):
     pass
+
+
+def utcnow() -> datetime:
+    """Naive UTC now — the one clock every column default and timestamped
+    write uses.
+
+    The `DateTime` columns are timezone-naive, so aware values must not reach
+    them: psycopg would cast through the session timezone and shift the stored
+    instant. Storing UTC-naive and rendering with a `Z` suffix in the API
+    (`schemas.responses.envelope.iso_utc`) gives the ISO 8601 UTC contract in
+    `docs/API_CONVENTIONS.md` §6 without a schema migration.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # FastAPI dependency: yields a DB session per request

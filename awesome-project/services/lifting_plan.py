@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from database import utcnow
 from models.inspection import Inspection
 
 #: Warning thresholds. Client-confirmable; defaults per LIFTING_PLAN.md §6.
@@ -100,7 +101,7 @@ def build_lifting_plan(
 
     return {
         "inspection_id": insp.id,
-        "generated_at": datetime.now(),
+        "generated_at": utcnow(),
         "detection_status": insp.detection_status,
         "description": description,
         "objects": result.get("objects") or [],

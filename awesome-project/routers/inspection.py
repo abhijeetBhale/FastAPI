@@ -7,7 +7,6 @@ editing the URL — ownership is enforced by deriving `user_id` from the session
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
@@ -16,32 +15,19 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models.inspection import INSPECTION_STATUSES
+from models.inspection import Inspection
 from models.user import User
 from schemas.errors import jsonable_errors
-from schemas.requests.inspection import InspectionCreate, InspectionUpdate
+from schemas.requests.inspection import InspectionCreate
 from schemas.responses.inspection import (
     CargoTypeOut,
-    InspectionListResponse,
-    InspectionResponse,
-    InspectionSummary,
-    TagOut,
+    inspection_dump,
 )
 from schemas.responses.envelope import envelope, list_links, pagination_meta
 from services.idempotency_service import IdempotencyService
 from services.inspection_service import InspectionService, resolve_image_path
-from services.rbac import SELF_ASSIGNABLE_STATUSES, require_permission
+from services.rbac import SELF_ASSIGNABLE_STATUSES
 from services.security import require_current_user
-
-
-def _page(rows, total, skip, limit) -> InspectionListResponse:
-    return InspectionListResponse(
-        items=rows,
-        total=total,
-        skip=skip,
-        limit=limit,
-        pages=-(-total // limit) if limit else 0,
-    )
 
 
 # --------------------------------------------------------------------- #
@@ -69,7 +55,10 @@ def portal_cargo_types(
     form cannot render its dropdown without them — so a signed-in user needs
     this even though they hold no admin permission.
     """
-    return envelope(InspectionService(db).list_cargo_types())
+    return envelope(
+        [CargoTypeOut.model_validate(c).model_dump(mode="json")
+         for c in InspectionService(db).list_cargo_types()]
+    )
 
 
 @portal.get(
@@ -98,7 +87,7 @@ def portal_summary(
 )
 def portal_submissions(
     page: int = Query(1, ge=1),
-    per_page: int = Query(6, ge=1, le=50, description="Cards per page"),
+    per_page: int = Query(6, ge=1, le=100, description="Cards per page"),
     cargo_type: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     tag: Optional[str] = Query(None),
@@ -119,7 +108,7 @@ def portal_submissions(
         search=search,
         sort=sort,
     )
-    items = [InspectionResponse.model_validate(i).model_dump(mode="json")
+    items = [inspection_dump(i, base="/portal/submissions")
              for i in result.items]
     total_pages = -(-result.total // limit) if limit else 0
     return envelope(
@@ -172,12 +161,15 @@ async def portal_create_submission(
         replay = idem.lookup(idempotency_key, "POST /portal/submissions")
         if replay is not None:
             stored = replay.response
+            # §5: a replay returns the cached response plus this header, so
+            # the client can tell a replay from a fresh create.
             return JSONResponse(
                 status_code=replay.status_code,
                 content=envelope(
                     stored,
                     links={"self": f"/portal/submissions/{stored['id']}"},
                 ),
+                headers={"Idempotent-Replay": "true"},
             )
 
     if status not in SELF_ASSIGNABLE_STATUSES:
@@ -214,7 +206,7 @@ async def portal_create_submission(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    body = InspectionResponse.model_validate(insp).model_dump(mode="json")
+    body = inspection_dump(insp, base="/portal/submissions")
     if idempotency_key:
         idem.store(idempotency_key, "POST /portal/submissions", 201, body)
     response.headers["Location"] = f"/portal/submissions/{insp.id}"
@@ -236,7 +228,7 @@ def portal_submission_detail(
             status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found"
         )
     return envelope(
-        InspectionResponse.model_validate(insp).model_dump(mode="json"),
+        inspection_dump(insp, base="/portal/submissions"),
         links={"self": f"/portal/submissions/{insp.id}"},
     )
 
@@ -251,13 +243,18 @@ def portal_withdraw_submission(
     user: User = Depends(require_current_user),
     db: Session = Depends(get_db),
 ):
-    insp = InspectionService(db).get_inspection(inspection_id)
-    if not insp or insp.user_id != user.id:
+    # Ownership first — another user's id stays a 404, never a 403 (§7.2).
+    # DELETE is idempotent (§5): withdrawing an already-withdrawn submission
+    # is still 204. Only a submission that never existed 404s.
+    insp = db.get(Inspection, inspection_id)
+    if insp is None or insp.user_id != user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found"
         )
-    InspectionService(db).soft_delete(inspection_id)
-    return JSONResponse(status_code=204, content=None)
+    if insp.deleted_at is None:
+        InspectionService(db).soft_delete(inspection_id)
+    # 204 with an empty body — no envelope, no "null".
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @portal.get(

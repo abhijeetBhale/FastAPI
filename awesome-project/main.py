@@ -83,10 +83,10 @@ app.include_router(detection_router, dependencies=authed)
 app.include_router(lifting_plan_router, dependencies=authed)
 # Admin: review workflow + user management (cross-user, requires admin role)
 app.include_router(admin_router, dependencies=authed)
-# Health checks
-app.include_router(health_router)
-# Registered last so /health keeps its literal path even if a resource router
-# later introduces a `/{id}` route that would otherwise shadow it.
+# Health checks — registered last, so /health keeps its literal path even if a
+# resource router later introduces a `/{id}` route that would shadow it.
+# Included exactly once: a second include duplicates the routes and their
+# OpenAPI operationIds.
 app.include_router(health_router)
 
 # Frontend UI (open http://127.0.0.1:8000/ui/)

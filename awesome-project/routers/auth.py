@@ -4,7 +4,12 @@ from sqlalchemy.orm import Session
 from config import get_settings
 from database import get_db
 from models.user import User
-from schemas.requests.auth import LoginRequest, RegisterRequest
+from schemas.requests.auth import (
+    ChangePasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    SetPasswordRequest,
+)
 from schemas.responses.auth import (
     CurrentUserResponse,
     LoginResponse,
@@ -122,7 +127,7 @@ def me(user: User = Depends(require_current_user), db: Session = Depends(get_db)
     summary="Set a password on an account that has none",
 )
 def set_password(
-    payload: dict,
+    payload: SetPasswordRequest,
     response: Response,
     user: User = Depends(require_current_user),
     db: Session = Depends(get_db),
@@ -133,9 +138,7 @@ def set_password(
             status_code=400,
             detail="This account already has a password. Use change-password.",
         )
-    new_password = payload.get("password")
-    if not new_password:
-        raise HTTPException(status_code=422, detail="password is required")
+    new_password = payload.password
 
     try:
         AuthService(db).set_password(user, new_password)
@@ -157,19 +160,14 @@ def set_password(
     "/change-password", summary="Change your password"
 )
 def change_password(
-    payload: dict,
+    payload: ChangePasswordRequest,
     user: User = Depends(require_current_user),
     db: Session = Depends(get_db),
 ):
-    current = payload.get("current_password")
-    new_password = payload.get("new_password")
-    if not current or not new_password:
-        raise HTTPException(
-            status_code=422,
-            detail="current_password and new_password are required",
-        )
     try:
-        AuthService(db).change_password(user, current, new_password)
+        AuthService(db).change_password(
+            user, payload.current_password, payload.new_password
+        )
     except AuthError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except PasswordWeak as e:

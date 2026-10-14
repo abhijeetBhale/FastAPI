@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from database import utcnow
 from models.inspection import Inspection
 from models.user import User
 from schemas.requests.auth import RegisterRequest
@@ -60,7 +61,7 @@ class AuthService:
             email=data.email.strip().lower(),
             phone=data.phone or None,
             password_hash=hash_password(data.password),
-            password_set_at=datetime.now(),
+            password_set_at=utcnow(),
             is_active=True,
         )
         self.db.add(user)
@@ -107,7 +108,7 @@ class AuthService:
             self.db.commit()
             raise AuthError(generic)
 
-        user.last_login_at = datetime.now()
+        user.last_login_at = utcnow()
         self.audit.record(
             action="login", entity_type="user", entity_id=user.id,
             actor_user_id=user.id,
@@ -121,7 +122,7 @@ class AuthService:
         if problems:
             raise PasswordWeak(problems)
         user.password_hash = hash_password(new_password)
-        user.password_set_at = datetime.now()
+        user.password_set_at = utcnow()
         self.audit.record(
             action="set_password",
             entity_type="user",

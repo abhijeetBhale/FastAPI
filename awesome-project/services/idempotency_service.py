@@ -17,6 +17,7 @@ from typing import Any, Optional
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from database import utcnow
 from models.idempotency_key import IdempotencyKey
 
 #: Keys older than this are treated as absent and pruned.
@@ -37,7 +38,7 @@ class IdempotencyService:
 
         if found is None:
             return None
-        if found.expires_at and found.expires_at < datetime.now():
+        if found.expires_at and found.expires_at < utcnow():
             self.db.delete(found)
             self.db.commit()
             return None
@@ -56,7 +57,7 @@ class IdempotencyService:
                 endpoint=endpoint,
                 status_code=status_code,
                 response=response,
-                expires_at=datetime.now() + timedelta(hours=RETENTION_HOURS),
+                expires_at=utcnow() + timedelta(hours=RETENTION_HOURS),
             )
         )
         self.db.commit()
@@ -64,7 +65,7 @@ class IdempotencyService:
     def purge_expired(self) -> int:
         result = self.db.execute(
             delete(IdempotencyKey).where(
-                IdempotencyKey.expires_at < datetime.now()
+                IdempotencyKey.expires_at < utcnow()
             )
         )
         self.db.commit()

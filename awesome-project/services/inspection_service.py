@@ -19,6 +19,7 @@ from typing import Any, Optional
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from database import utcnow
 from models.cargo_type import CargoType
 from models.inspection import INSPECTION_STATUSES, Inspection
 from models.tag import Tag
@@ -352,7 +353,7 @@ class InspectionService:
         self.db.add(insp)
         try:
             self.db.flush()
-            now = datetime.now()
+            now = utcnow()
             insp.updated_at = now
             self.audit.record(
                 action="create",
@@ -389,7 +390,7 @@ class InspectionService:
             if hasattr(insp, field):
                 setattr(insp, field, value)
 
-        insp.updated_at = datetime.now()
+        insp.updated_at = utcnow()
         self.audit.record(
             action="update",
             entity_type="inspection",
@@ -409,7 +410,7 @@ class InspectionService:
         insp = self.get_inspection(inspection_id)
         if not insp:
             return False
-        insp.deleted_at = datetime.now()
+        insp.deleted_at = utcnow()
         insp.updated_at = insp.deleted_at
         self.audit.record(
             action="soft_delete",
@@ -444,7 +445,7 @@ class InspectionService:
         if not insp or insp.deleted_at is None:
             return None
         insp.deleted_at = None
-        insp.updated_at = datetime.now()
+        insp.updated_at = utcnow()
         self.audit.record(
             action="restore", entity_type="inspection", entity_id=insp.id
         )

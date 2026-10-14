@@ -1,10 +1,9 @@
-from datetime import datetime
-
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from config import get_settings
-from database import get_db
+from database import get_db, utcnow
+from errors import problem
 from schemas.responses.envelope import envelope
 from schemas.responses.health import HealthResponse, ReadinessResponse
 from services.health_service import HealthService
@@ -22,7 +21,7 @@ def health():
             status="ok",
             service=settings.app_title,
             version=settings.app_version,
-            timestamp=datetime.now(),
+            timestamp=utcnow(),
         ).model_dump(mode="json")
     )
 
@@ -32,17 +31,17 @@ def health():
     summary="Readiness probe",
     responses={503: {"description": "A dependency is unavailable"}},
 )
-def readiness(response: Response, db: Session = Depends(get_db)):
+def readiness(db: Session = Depends(get_db)):
     """Full check including the database. Returns 503 when PostgreSQL is
-    unreachable, so a load balancer stops sending traffic."""
+    unreachable, so a load balancer stops sending traffic — and per §4 the
+    503 body is an RFC 9457 problem document, not an envelope."""
     ok, latency_ms, error = HealthService(db).check_database()
     if not ok:
-        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return problem(503, error or "The database is unreachable.")
     return envelope(
         ReadinessResponse(
-            status="ok" if ok else "unavailable",
-            database="up" if ok else "down",
+            status="ok",
+            database="up",
             latency_ms=round(latency_ms, 3),
-            detail=error,
         ).model_dump(mode="json")
     )

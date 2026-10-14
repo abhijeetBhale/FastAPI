@@ -345,7 +345,7 @@ function adminCard(i) {
   const done = i.status === "approved" || i.status === "rejected";
   return `
     <div class="item">
-      <img src="${ownerImage(i)}" alt="${escapeHtml(i.image_original_name)}"
+      <img src="${i.image_url}" alt="${escapeHtml(i.image_original_name)}"
            onerror="this.style.visibility='hidden'">
       <div class="body">
         <div class="meta">

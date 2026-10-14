@@ -1,7 +1,8 @@
-from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel
+
+from schemas.responses.envelope import IsoDateTime
 
 
 class UserResponse(BaseModel):
@@ -11,7 +12,7 @@ class UserResponse(BaseModel):
     phone: Optional[str] = None
     is_active: bool
     role: str = "user"
-    created_at: datetime
+    created_at: IsoDateTime
 
     model_config = {"from_attributes": True}
 

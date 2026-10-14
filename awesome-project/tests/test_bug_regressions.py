@@ -136,3 +136,77 @@ class TestErrorHandling:
         assert "request_id" in body
         assert "traceback" not in r.text.lower()
         assert "deliberate test failure" not in r.text
+
+
+class TestFormattingContract:
+    """docs/API_CONVENTIONS.md §2/§4/§5/§6, made executable.
+
+    Each assertion pins one convention the API made once and then kept
+    making everywhere: idempotent DELETE, the replay header, Allow on 405,
+    ISO 8601 UTC timestamps, omitted nulls, and surface-scoped URLs.
+    """
+
+    def _submission(self, client, png_bytes):
+        client.post("/auth/register", json={"name": "Fmt",
+                                            "email": "fmt@example.com",
+                                            "password": "quay-crane-42"})
+        r = client.post("/portal/submissions", data={"cargo_type": "scrap-steel"},
+                        files={"image": ("f.png", png_bytes(), "image/png")})
+        assert r.status_code == 201, r.text
+        return r
+
+    def test_delete_is_idempotent_with_an_empty_body(self, client, png_bytes):
+        iid = self._submission(client, png_bytes).json()["data"]["id"]
+        assert client.delete(f"/portal/submissions/{iid}").status_code == 204
+        # Repeat delete: still 204, not 404 (§5) — and never a "null" body.
+        r = client.delete(f"/portal/submissions/{iid}")
+        assert r.status_code == 204
+        assert r.content == b""
+
+    def test_admin_delete_is_idempotent(self, admin_client, png_bytes):
+        created = admin_client.post(
+            "/admin/submissions",
+            data={"name": "A", "email": "adm-fmt@example.com",
+                  "cargo_type": "other"},
+            files={"image": ("a.png", png_bytes(), "image/png")},
+        )
+        iid = created.json()["data"]["id"]
+        assert admin_client.delete(f"/admin/submissions/{iid}").status_code == 204
+        assert admin_client.delete(f"/admin/submissions/{iid}").status_code == 204
+
+    def test_idempotent_replay_carries_the_header(self, client, png_bytes):
+        self._submission(client, png_bytes)
+        files = {"image": ("a.png", png_bytes(), "image/png")}
+        first = client.post("/portal/submissions", data={"cargo_type": "other"},
+                            files=files, headers={"Idempotency-Key": "fmt-key"})
+        second = client.post("/portal/submissions", data={"cargo_type": "other"},
+                             files=files, headers={"Idempotency-Key": "fmt-key"})
+        assert first.status_code == 201
+        assert first.headers.get("Idempotent-Replay") is None
+        assert second.headers.get("Idempotent-Replay") == "true"
+        assert second.json()["data"]["id"] == first.json()["data"]["id"]
+
+    def test_405_carries_allow_and_a_problem_body(self, client):
+        r = client.put("/auth/login", json={})
+        assert r.status_code == 405
+        assert "allow" in {k.lower() for k in r.headers}
+        assert r.headers["content-type"].startswith("application/problem+json")
+
+    def test_timestamps_are_iso8601_utc(self, client, png_bytes):
+        body = self._submission(client, png_bytes).json()["data"]
+        assert body["created_at"].endswith("Z"), body["created_at"]
+        assert "T" in body["created_at"]
+
+    def test_unset_fields_are_omitted_not_null(self, client, png_bytes):
+        body = self._submission(client, png_bytes).json()["data"]
+        for key in ("phone", "notes", "status_note", "reviewed_by",
+                    "reviewed_at", "detected_at", "volume_m3",
+                    "estimated_weight_kg"):
+            assert key not in body, f"{key} should be omitted, not null"
+
+    def test_image_url_matches_the_surface(self, client, png_bytes, admin_client):
+        iid = self._submission(client, png_bytes).json()["data"]["id"]
+        mine = client.get(f"/portal/submissions/{iid}").json()["data"]
+        assert mine["image_url"] == f"/portal/submissions/{iid}/image"
+        theirs = admin_client.get(f"/admin/submissions/{iid}").json()["data"]
+        assert theirs["image_url"] == f"/admin/submissions/{iid}/image"

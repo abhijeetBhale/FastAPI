@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.user import User
 from routers.detection import _load_owned
+from schemas.responses.envelope import envelope
 from services.lifting_plan import build_lifting_plan, render_markdown
 from services.security import require_current_user
 
@@ -74,7 +75,15 @@ def lifting_plan(
     data = build_lifting_plan(insp, ref_m=ref_m, ref_px=ref_px)
 
     if format == "json":
-        return data
+        # §1: the plan data is the payload; `generated_at` is response
+        # context, so it rides in `meta` — as ISO 8601 UTC, courtesy of
+        # the envelope's scrubbing — rather than inside `data`.
+        payload = dict(data)
+        generated = payload.pop("generated_at", None)
+        return envelope(
+            payload,
+            meta={"generated_at": generated} if generated else None,
+        )
 
     return Response(
         content=render_markdown(data),

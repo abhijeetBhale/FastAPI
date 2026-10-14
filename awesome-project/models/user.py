@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import String, Integer, Boolean, DateTime, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from database import Base
+from database import Base, utcnow
 
 if TYPE_CHECKING:  # avoids a circular import at runtime
     from .inspection import Inspection
@@ -38,7 +38,7 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now()
+        DateTime, nullable=False, default=utcnow
     )
 
     @property

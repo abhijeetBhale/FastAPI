@@ -48,3 +48,12 @@ class InspectionUpdate(BaseModel):
     volume_m3: Optional[float] = Field(default=None, ge=0)
     estimated_weight_kg: Optional[float] = Field(default=None, ge=0)
     tags: Optional[list[str]] = Field(default=None, max_length=20)
+
+
+class BulkDecisionRequest(BaseModel):
+    """Batch approve/reject. Each id is processed independently — one bad
+    row does not abort the batch, the response reports per-item outcomes."""
+
+    ids: list[int] = Field(min_length=1, max_length=200)
+    action: Literal["approve", "reject"]
+    note: Optional[str] = Field(default=None, max_length=300)
