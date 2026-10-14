@@ -296,37 +296,73 @@ const $ = id => document.getElementById(id);
 let me = null, cargoTypes = [], picked = null, page = 0, pageSize = 6;
 let registerMode = false;
 
+/* ---------------- the API's shape, in one place ---------------- */
+// Every success is an envelope `{data, meta?, links?}` (API_CONVENTIONS.md §1)
+// and every failure is an RFC 9457 problem document, which is NOT an envelope
+// (§4). Reading both here is the whole point: the UI used to unwrap by hand at
+// each call site, so a response read one level too high — `d.user` where the
+// API sends `data.user` — silently produced `undefined`, and the page looked
+// like it had signed itself out on reload.
+async function call(path, options) {
+  let res, body = null;
+  try {
+    res = await fetch(API + path, options);
+  } catch (e) {
+    // Offline / DNS / aborted: no HTTP status at all.
+    return { ok: false, status: 0, data: null, page: null,
+             detail: "Cannot reach the server.", errors: null, body: null };
+  }
+  try { body = await res.json(); } catch { /* 204, or a non-JSON body */ }
+  const envelope = body && typeof body === "object" && "data" in body;
+  return {
+    ok: res.ok,
+    status: res.status,
+    data: envelope ? body.data : null,
+    // Pagination is response context: `meta.pagination`, never in `data` (§3).
+    page: (body && body.meta && body.meta.pagination) || null,
+    // A problem document puts `detail` at the top level, with `errors[]` for
+    // field-level failures (422).
+    detail: (body && body.detail) || null,
+    errors: (body && body.errors) || null,
+    body,
+  };
+}
+
 /* ---------------- admin ---------------- */
-let adminPage = 0;
+let adminPage = 0;                 // 0-based here; the API's `page` is 1-based.
+const ADMIN_PAGE_SIZE = 10;
 const selected = new Set();
 
 async function refreshAdmin() {
-  const r = await fetch(API + "/admin/stats");
-  if (r.status === 403) { showAuth(); return; }
-  if (!r.ok) return;
-  const d = await r.json();
-  $("aTotal").textContent = d.stats.inspections;
-  $("aApproved").textContent = d.stats.approved;
-  $("aUsers").textContent = d.users;
+  const stats = await call("/admin/stats");
+  if (stats.status === 401 || stats.status === 403) { showAuth(); return; }
+  if (!stats.ok) return;
+  const s = stats.data;
+  $("aTotal").textContent = s.stats.inspections;
+  $("aApproved").textContent = s.stats.approved;
+  $("aPending").textContent = s.stats.pending;
+  $("aUsers").textContent = s.users;
 
-  const params = new URLSearchParams({ skip: adminPage * 10, limit: 10 });
+  const params = new URLSearchParams({
+    page: adminPage + 1, per_page: ADMIN_PAGE_SIZE,
+  });
   const q = $("aSearch").value.trim();
   const st = $("aStatus").value;
   if (q) params.set("search", q);
   if (st) params.set("status", st);
 
-  const lr = await fetch(API + "/admin/submissions?" + params);
-  if (lr.status === 401) { showAuth(); return; }
-  const list = await lr.json();
+  const list = await call("/admin/submissions?" + params);
+  if (list.status === 401) { showAuth(); return; }
+  if (!list.ok) return;
+  const p = list.page || { page: 1, per_page: ADMIN_PAGE_SIZE, total: 0, total_pages: 0 };
+  const items = list.data || [];
 
-  const pending = d.stats.pending;
-  $("aPending").textContent = pending;
-  $("adminCount").textContent = list.total
-    ? `Showing ${adminPage*10+1}–${Math.min((adminPage+1)*10, list.total)} of ${list.total}`
+  $("adminCount").textContent = p.total
+    ? `Showing ${(p.page - 1) * p.per_page + 1}–${Math.min(p.page * p.per_page, p.total)} of ${p.total}`
     : "Nothing to review.";
 
-  $("adminHost").innerHTML = list.total
-    ? `<div class="grid">${list.items.map(adminCard).join("")}</div>${adminPager(list)}`
+  $("adminHost").innerHTML = p.total
+    ? `<div class="grid">${items.map(adminCard).join("")}</div>${adminPager(p)}`
     : `<div class="empty"><div class="glyph">&#128203;</div><h3>Nothing here</h3>
        <p>No submissions match this filter.</p></div>`;
 
@@ -378,13 +414,15 @@ function adminCard(i) {
     </div>`;
 }
 
-function adminPager(d) {
-  const pages = Math.max(1, Math.ceil(d.total / d.limit));
+// `p` is `meta.pagination` straight from the API: the page count is the
+// server's, not something the client re-derives from total/per_page.
+function adminPager(p) {
+  const pages = Math.max(1, p.total_pages || 0);
   if (pages <= 1) return "";
   return `<div class="pager">
-    <button class="ghost" id="aPrev" ${adminPage === 0 ? "disabled" : ""}>Previous</button>
-    <span class="info">Page ${adminPage+1} of ${pages}</span>
-    <button class="ghost" id="aNext" ${adminPage >= pages-1 ? "disabled" : ""}>Next</button>
+    <button class="ghost" id="aPrev" ${p.page <= 1 ? "disabled" : ""}>Previous</button>
+    <span class="info">Page ${p.page} of ${pages}</span>
+    <button class="ghost" id="aNext" ${p.page >= pages ? "disabled" : ""}>Next</button>
   </div>`;
 }
 
@@ -401,26 +439,23 @@ function renderBulkBar() {
 }
 
 async function decide(id, action, note) {
-  const r = await fetch(`${API}/admin/submissions/${id}/${action}`, {
+  const res = await call(`/admin/submissions/${id}/${action}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(note ? { note } : {}),
   });
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({}));
-    alert(d.detail || "Action failed.");
-    return;
-  }
+  if (!res.ok) { alert(res.detail || "Action failed."); return; }
   refreshAdmin();
 }
 
 $("bulkApprove").addEventListener("click", async () => {
   if (!selected.size) return;
-  const r = await fetch(API + "/admin/submissions/bulk", {
+  const res = await call("/admin/submissions/bulk", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids: [...selected], action: "approve" }),
   });
-  const d = await r.json();
+  if (!res.ok) { alert(res.detail || "Bulk approve failed."); return; }
+  const d = res.data;
   alert(`Approved ${d.results.filter(x => x.ok).length} of ${d.processed}.`);
   selected.clear();
   refreshAdmin();
@@ -429,11 +464,12 @@ $("bulkApprove").addEventListener("click", async () => {
 $("bulkReject").addEventListener("click", async () => {
   if (!selected.size) return;
   if (!confirm(`Reject ${selected.size} submission(s)?`)) return;
-  const r = await fetch(API + "/admin/submissions/bulk", {
+  const res = await call("/admin/submissions/bulk", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids: [...selected], action: "reject" }),
   });
-  const d = await r.json();
+  if (!res.ok) { alert(res.detail || "Bulk reject failed."); return; }
+  const d = res.data;
   alert(`Rejected ${d.results.filter(x => x.ok).length} of ${d.processed}.`);
   selected.clear();
   refreshAdmin();
@@ -472,17 +508,28 @@ function errBox(id, msg) {
 }
 
 async function boot() {
-  try {
-    const r = await fetch(API + "/auth/me");
-    if (r.ok) {
-      const d = await r.json();
-      me = d.user;
-      // Only render the Admin tab if the server says this account has the role.
-      $("adminTab").classList.toggle("hidden", !d.is_admin);
-      return showPortal();
-    }
-  } catch { /* offline */ }
+  const res = await call("/auth/me");
+  // The session lives in an httpOnly cookie, so a reload re-authenticates with
+  // no client-side state — provided this reads `data.user`, which is where the
+  // API actually puts it (the old `d.user` was `undefined`, so a signed-in
+  // reload fell through to the sign-in screen).
+  //
+  // This is the only place the shell is decided. Signing in through the form
+  // calls boot() too, so the two paths cannot drift apart again: the reply to
+  // /auth/login is a session confirmation, not a description of what to render.
+  if (res.ok && res.data && res.data.user) return applySession(res.data);
   showAuth();
+}
+
+// `session` is the /auth/me payload: {user, permissions, is_admin}.
+function applySession(session) {
+  me = session.user;
+  // Only render the Admin tab if the server says this account has the role.
+  $("adminTab").classList.toggle("hidden", !session.is_admin);
+  // A sign-in can follow a sign-out, or another account, on the same page, so
+  // never leave the previous identity's view on screen for the new one.
+  if (!session.is_admin) switchTab("submissions");
+  showPortal();
 }
 
 function showAuth() {
@@ -490,6 +537,9 @@ function showAuth() {
   $("portalView").classList.add("hidden");
   $("whoami").classList.add("hidden");
   $("logoutBtn").classList.add("hidden");
+  // Anonymous: nothing from the signed-out account may survive, admin included.
+  $("adminTab").classList.add("hidden");
+  switchTab("submissions");
 }
 
 function showPortal() {
@@ -528,20 +578,20 @@ $("authSubmit").addEventListener("click", async () => {
     ? { name: $("aName").value.trim(), email, phone: $("aPhone").value.trim() || null, password: pass }
     : { email, password: pass };
 
-  const url = registerMode ? API + "/auth/register" : API + "/auth/login";
+  const path = registerMode ? "/auth/register" : "/auth/login";
   const btn = $("authSubmit");
   btn.disabled = true; errBox("authErr", "");
   try {
-    const r = await fetch(url, {
+    const res = await call(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || "Sign in failed.");
-    me = data.user;
+    if (!res.ok) throw new Error(res.detail || "Sign in failed.");
     $("aPass").value = "";
-    showPortal();
+    // Re-read the session instead of trusting this reply: /auth/me is what
+    // carries `is_admin`, and it is the same call a reload makes.
+    await boot();
   } catch (e) {
     errBox("authErr", e.message);
   } finally {
@@ -550,7 +600,7 @@ $("authSubmit").addEventListener("click", async () => {
 });
 
 $("logoutBtn").addEventListener("click", async () => {
-  await fetch(API + "/auth/logout", { method: "POST" });
+  await call("/auth/logout", { method: "POST" });
   me = null; picked = null;
   setMode(false);
   $("aEmail").value = "";
@@ -559,10 +609,8 @@ $("logoutBtn").addEventListener("click", async () => {
 
 /* ---------------- lookups ---------------- */
 async function loadCargoTypes() {
-  try {
-    const r = await fetch(API + "/portal/cargo-types");
-    cargoTypes = await r.json();
-  } catch { cargoTypes = []; }
+  const res = await call("/portal/cargo-types");
+  cargoTypes = (res.ok && res.data) || [];
 
   const opts = cargoTypes
     .map(c => `<option value="${c.slug}">${c.label}${
@@ -572,10 +620,9 @@ async function loadCargoTypes() {
 }
 
 async function refreshStats() {
-  const r = await fetch(API + "/portal/summary");
-  if (!r.ok) return;
-  const d = await r.json();
-  const s = d.stats;
+  const res = await call("/portal/summary");
+  if (!res.ok || !res.data) return;
+  const s = res.data.stats;
   $("sTotal").textContent = s.inspections;
   $("sApproved").textContent = s.approved;
   $("sRejected").textContent = s.rejected;
@@ -585,24 +632,27 @@ async function refreshStats() {
 /* ---------------- submissions list ---------------- */
 async function refresh() {
   await refreshStats();
-  const params = new URLSearchParams({ skip: page * pageSize, limit: pageSize });
+  // `page` is 1-based on the API and 0-based in this script.
+  const params = new URLSearchParams({ page: page + 1, per_page: pageSize });
   const q = $("fSearch").value.trim();
   const c = $("fCargo").value;
   if (q) params.set("search", q);
   if (c) params.set("cargo_type", c);
 
-  const r = await fetch(API + "/portal/submissions?" + params);
-  if (r.status === 401) { showAuth(); return; }
-  const d = await r.json();
+  const res = await call("/portal/submissions?" + params);
+  if (res.status === 401) { showAuth(); return; }
+  if (!res.ok) return;
+  const p = res.page || { page: 1, per_page: pageSize, total: 0, total_pages: 0 };
+  const items = res.data || [];
 
-  const from = d.total === 0 ? 0 : page * pageSize + 1;
-  const to = Math.min((page + 1) * pageSize, d.total);
-  $("subCount").textContent = d.total
-    ? `Showing ${from}–${to} of ${d.total}`
+  const from = p.total === 0 ? 0 : (p.page - 1) * p.per_page + 1;
+  const to = Math.min(p.page * p.per_page, p.total);
+  $("subCount").textContent = p.total
+    ? `Showing ${from}–${to} of ${p.total}`
     : "No submissions yet.";
 
   const host = $("listHost");
-  if (d.total === 0) {
+  if (p.total === 0) {
     host.innerHTML = `
       <div class="empty">
         <div class="glyph">&#128230;</div>
@@ -615,8 +665,8 @@ async function refresh() {
     return;
   }
 
-  host.innerHTML = `<div class="grid">${d.items.map(card).join("")}</div>
-    ${pager(d)}`;
+  host.innerHTML = `<div class="grid">${items.map(card).join("")}</div>
+    ${pager(p)}`;
   host.querySelectorAll("[data-del]").forEach(btn =>
     btn.addEventListener("click", () => withdraw(btn.dataset.del)));
 }
@@ -646,14 +696,15 @@ function card(i) {
     </div>`;
 }
 
-function pager(d) {
-  const pages = Math.max(1, Math.ceil(d.total / d.limit));
+// `p` is the API's `meta.pagination`: the server owns the page count.
+function pager(p) {
+  const pages = Math.max(1, p.total_pages || 0);
   if (pages <= 1) return "";
   return `
     <div class="pager">
-      <button class="ghost" id="prevPage" ${page === 0 ? "disabled" : ""}>Previous</button>
-      <span class="info">Page ${page + 1} of ${pages}</span>
-      <button class="ghost" id="nextPage" ${page >= pages - 1 ? "disabled" : ""}>Next</button>
+      <button class="ghost" id="prevPage" ${p.page <= 1 ? "disabled" : ""}>Previous</button>
+      <span class="info">Page ${p.page} of ${pages}</span>
+      <button class="ghost" id="nextPage" ${p.page >= pages ? "disabled" : ""}>Next</button>
     </div>`;
 }
 
@@ -680,12 +731,8 @@ $("fCargo").addEventListener("change", () => { page = 0; refresh(); });
 
 async function withdraw(id) {
   if (!confirm("Withdraw this submission? It stays in the audit trail.")) return;
-  const r = await fetch(`${API}/portal/submissions/${id}`, { method: "DELETE" });
-  if (!r.ok) {
-    const d = await r.json();
-    alert(d.detail || "Could not withdraw.");
-    return;
-  }
+  const res = await call(`/portal/submissions/${id}`, { method: "DELETE" });
+  if (!res.ok) { alert(res.detail || "Could not withdraw."); return; }
   refresh();
 }
 
@@ -757,15 +804,17 @@ $("uploadBtn").addEventListener("click", async () => {
   errBox("upErr", "");
 
   try {
-    const r = await fetch(API + "/portal/submissions", {
+    const res = await call("/portal/submissions", {
       method: "POST", body: form, headers: { "Idempotency-Key": key },
     });
-    const d = await r.json();
-    if (!r.ok) {
-      let msg = d.detail || "Upload failed.";
-      if (Array.isArray(msg))
-        msg = msg.map(e => `${(e.loc||[]).slice(1).join(".")}: ${e.msg}`).join("\n");
-      throw new Error(msg);
+    if (!res.ok) {
+      // 422 carries per-field failures in `errors[]`, everything else in
+      // `detail` — both are top-level members of the problem document (§4).
+      const fields = Array.isArray(res.errors)
+        ? res.errors.map(e => `${e.field}: ${e.message}`).join("\n")
+        : "";
+      throw new Error(
+        [res.detail || "Upload failed.", fields].filter(Boolean).join("\n"));
     }
     // Success: reset the form and show the new card in My submissions.
     picked = null;
