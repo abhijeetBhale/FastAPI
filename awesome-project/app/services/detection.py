@@ -147,11 +147,31 @@ def run_detection(image_path: Path, *, timeout: int | None = None) -> DetectionR
     run_dir.mkdir(parents=True, exist_ok=True)
 
     env = dict(os.environ)
+    repo_root = PROJECT_ROOT.resolve()
     project_dir = resolve_project_dir()
+
+    # The notebook anchors every relative path to its working directory, and the
+    # runner itself interprets --image relative to cwd. In the default (vendored)
+    # case the notebook lives under detector/ but the image lives under the repo
+    # root's storage/, so the subprocess must run from the repo root, not from
+    # detector/. When DETECTION_PROJECT_DIR is explicitly configured, the caller
+    # is responsible for making both the notebook and the image reachable from
+    # that folder.
     if get_settings().detection_project_dir.strip():
-        # An explicit override; otherwise the runner defaults to the vendored
-        # detector/ on its own and needs no variable at all.
+        # Explicit override: detection project dir is also the working directory.
+        runner_cwd = project_dir
         env["CARGO_PROJECT_DIR"] = str(project_dir)
+    else:
+        # Vendored detector: keep the notebook happy by pointing it at itself,
+        # but run from the repo root so repo-relative image paths resolve.
+        runner_cwd = repo_root
+        env["CARGO_PROJECT_DIR"] = str(project_dir)
+
+    # Pass the image as an absolute path so it is findable regardless of cwd.
+    image_abs = Path(image_path).resolve()
+    if not image_abs.is_file():
+        raise FileNotFoundError(f"Image not found: {image_abs}")
+
     # Silences the telemetry progress bars so the captured output stays readable.
     env.setdefault("CARGO_DEBUG", "0")
     env.setdefault("CARGO_PROGRESS", "0")
@@ -160,7 +180,7 @@ def run_detection(image_path: Path, *, timeout: int | None = None) -> DetectionR
     cmd = [
         settings.detection_python,
         str(RUNNER_SCRIPT),
-        "--image", str(image_path),
+        "--image", str(image_abs),
         "--out-dir", str(run_dir),
     ]
 
@@ -180,8 +200,7 @@ def run_detection(image_path: Path, *, timeout: int | None = None) -> DetectionR
             capture_output=True,
             text=True,
             timeout=limit,
-            # The notebook anchors every relative path to its cwd.
-            cwd=project_dir,
+            cwd=runner_cwd,
         )
         returncode = completed.returncode
         output = (completed.stdout or "") + (completed.stderr or "")
