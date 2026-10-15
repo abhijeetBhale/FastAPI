@@ -20,7 +20,7 @@ Every API route is `{version}/{group}/{resource...}`:
 | Rule | Detail |
 |---|---|
 | One version segment | `/api/v1`. A future `v2` is a second `include_router` call, not a rename |
-| Applied in one place | `main.py`, at `include_router()` time. The value lives in `api.py` and is imported wherever a URL is built |
+| Applied in one place | `app/api/v1/api.py`: `api_router` carries the prefix and `main.py` includes it once. The constant lives in `app/api/v1/__init__.py` and is imported wherever a URL is built |
 | Groups | `auth`, `portal`, `admin` — they describe the audience, which is the axis that matters here |
 | Segments are `kebab-case` | `/lifting-plan`, not `/lifting_plan` |
 | Path parameters are `snake_case` | `/submissions/{inspection_id}` — they name JSON fields |

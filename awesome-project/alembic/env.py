@@ -5,13 +5,14 @@ from sqlalchemy import pool
 
 # Importing `database` gives us the app's already-configured engine, so
 # migrations and the app always target the same database. This removes the old
-# duplication where the URL was written in both alembic.ini and database.py.
-from database import Base, engine
-
+# duplication where the URL was written in both alembic.ini and
+# app/database/database.py.
+from app.database.base import Base
+from app.database.database import engine
 # Importing the package registers every model on Base.metadata. Listing them
 # individually here is what previously let a new model be forgotten, which
 # makes autogenerate silently emit nothing.
-import models  # noqa: F401
+import app.models  # noqa: F401
 
 config = context.config
 

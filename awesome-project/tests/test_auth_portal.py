@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from api import API_PREFIX
-from services.security import (
+from app.api.v1 import API_PREFIX
+from app.core.security import (
     create_access_token,
     hash_password,
     password_problems,
@@ -148,8 +148,7 @@ class TestLogin:
 
     def test_account_without_password_cannot_log_in(self, client, db):
         """Users that predate the portal have no password_hash."""
-        from models.user import User
-
+        from app.models.user import User
         db.add(User(name="Legacy", email="legacy@example.com"))
         db.commit()
         client.cookies.clear()
@@ -160,9 +159,8 @@ class TestLogin:
         assert "no password" in r.json()["detail"].lower()
 
     def test_deactivated_account_cannot_log_in(self, client, db):
-        from models.user import User
-        from services.security import hash_password as hp
-
+        from app.core.security import hash_password as hp
+        from app.models.user import User
         db.add(User(name="Gone", email="gone@example.com",
                     password_hash=hp("quay-crane-42"), is_active=False))
         db.commit()
@@ -198,8 +196,7 @@ class TestSession:
         assert client.get(API_PREFIX + "/auth/me").status_code == 401
 
     def test_tampered_token_is_rejected(self, client, db):
-        from models.user import User
-
+        from app.models.user import User
         user = User(name="T", email="t@example.com")
         db.add(user); db.commit(); db.refresh(user)
 

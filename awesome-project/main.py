@@ -2,15 +2,18 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from api import API_PREFIX
-from config import get_settings
-from database import SessionLocal
-from errors import register_exception_handlers
-from middlewares import install_middlewares
+from app.api.v1 import API_PREFIX
+from app.api.v1.api import api_router, health_router
+from app.core.config import get_settings
+from app.core.exceptions import register_exception_handlers
+from app.database.database import SessionLocal
+from app.middleware import install_middlewares
 
 settings = get_settings()
 
@@ -39,6 +42,10 @@ app = FastAPI(
         "Cargo inspection API. Inspections belong to a user; cargo types come "
         "from a lookup table with density values."
     ),
+    # `/docs` is served by `swagger_ui()` below rather than by FastAPI's
+    # default docs route: the default can only take JSON parameters, and the
+    # method sorter this API wants is a JavaScript function.
+    docs_url=None,
 )
 
 # CORS origins come from config rather than being hardcoded to "*".
@@ -58,36 +65,11 @@ register_exception_handlers(app)
 # Auth + RBAC + request context. Added last, so these wrap everything above.
 install_middlewares(app, SessionLocal)
 
-from routers.admin import router as admin_router  # noqa: E402
-from routers.auth import router as auth_router  # noqa: E402
-from routers.detection import router as detection_router  # noqa: E402
-from routers.health import router as health_router  # noqa: E402
-from routers.inspection import portal as portal_router  # noqa: E402
-from routers.lifting_plan import router as lifting_plan_router  # noqa: E402
-from services.security import bearer_scheme  # noqa: E402
+# Routing is assembled in `app/api/v1/api.py` and mounted here, so this module
+# stays a description of the *app* — middleware, error handling, the static
+# client — rather than a list of resources.
+app.include_router(api_router)
 
-#: Attached to every authenticated router so OpenAPI marks those operations as
-#: requiring `bearerAuth`. Swagger UI then renders the lock icon and enables its
-#: Authorize dialog — otherwise /docs offers no way to sign in, because its
-#: Authorize button can only hold apiKey/bearer/oauth2 and never a cookie.
-#: `auto_error=False` means this changes the documentation, not the behaviour:
-#: the real 401 still comes from `get_current_user`.
-authed = [Depends(bearer_scheme)]
-
-# Every API route lives under `/api/v1` (see `api.py`). The prefix is applied
-# here, once, rather than in each `APIRouter(prefix=...)` — otherwise the
-# version is duplicated across six files and the next bump can half-apply.
-
-# Auth is public (login/register) but also has protected endpoints (me, change-password)
-app.include_router(auth_router, prefix=API_PREFIX)
-# Portal: owner-scoped operations for signed-in users
-app.include_router(portal_router, prefix=API_PREFIX, dependencies=authed)
-# Detection: runs on the caller's own submissions
-app.include_router(detection_router, prefix=API_PREFIX, dependencies=authed)
-# Lifting plan: one Markdown document per submission, no persistence
-app.include_router(lifting_plan_router, prefix=API_PREFIX, dependencies=authed)
-# Admin: review workflow + user management (cross-user, requires admin role)
-app.include_router(admin_router, prefix=API_PREFIX, dependencies=authed)
 # Health checks stay unversioned (D1): probe paths are configured in load
 # balancers and containers, and are not part of the versioned API contract.
 # Registered last, so /health keeps its literal path even if a resource router
@@ -102,9 +84,43 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
 
 
+#: Swagger UI's own `operationsSorter: "method"` orders every tag's operations
+#: GET, PUT, POST, DELETE, … — not the order this API documents. A custom sorter
+#: has to be a JavaScript function, and FastAPI's docs renderer JSON-encodes
+#: every `swagger_ui_parameters` value, so a function cannot travel through it.
+#: `/docs` is therefore rendered by hand: FastAPI's HTML is produced with a
+#: placeholder, and the placeholder is swapped for this function literal. The
+#: order is GET, POST, PUT, PATCH, DELETE; ties keep their path order, because
+#: the sort is stable.
+_METHOD_ORDER_JS = (
+    "function (a, b) {"
+    '  var order = ["get", "post", "put", "patch", "delete", "options", "head", "trace"];'
+    '  var ai = order.indexOf(String(a.get("method") || "").toLowerCase());'
+    '  var bi = order.indexOf(String(b.get("method") || "").toLowerCase());'
+    "  return (ai < 0 ? order.length : ai) - (bi < 0 ? order.length : bi);"
+    "}"
+)
+
+#: Distinct enough that no other part of the generated HTML contains it.
+_METHOD_ORDER_PLACEHOLDER = "__method_order_sorter__"
+
+
+@app.get("/docs", include_in_schema=False)
+def swagger_ui() -> HTMLResponse:
+    """Swagger UI, ordered GET, POST, PUT, PATCH, DELETE within each tag."""
+    html = get_swagger_ui_html(
+        openapi_url=app.openapi_url or "/openapi.json",
+        title=f"{app.title} - Swagger UI",
+        swagger_ui_parameters={"operationsSorter": _METHOD_ORDER_PLACEHOLDER},
+    ).body.decode("utf-8")
+    return HTMLResponse(
+        html.replace(f'"{_METHOD_ORDER_PLACEHOLDER}"', _METHOD_ORDER_JS)
+    )
+
+
 @app.get("/")
 def root():
-    from schemas.responses.envelope import envelope
+    from app.schemas.responses.envelope import envelope
 
     return envelope(
         {

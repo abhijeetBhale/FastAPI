@@ -6,8 +6,7 @@ guessed. If one fails, the bug is back.
 
 from __future__ import annotations
 
-from api import API_PREFIX
-
+from app.api.v1 import API_PREFIX
 
 class TestPaginationBounds:
     """`per_page=-5` used to reach PostgreSQL and surface as a 500."""
@@ -87,9 +86,8 @@ class TestCaseInsensitiveEmail:
         """
         from sqlalchemy.exc import IntegrityError
 
-        import models
-        from models.user import User
-
+        import app.models
+        from app.models.user import User
         db.add_all([
             User(name="Racer", email="Race@Example.com"),
             User(name="Racer", email="race@example.com"),

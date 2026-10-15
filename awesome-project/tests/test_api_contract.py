@@ -26,8 +26,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from api import API_PREFIX
-
+from app.api.v1 import API_PREFIX
 
 #: Every path the app exposes, and the methods it must answer on. Health is
 #: deliberately outside the version prefix (D1) — probe configuration in a load
@@ -311,8 +310,7 @@ class TestMutationPayloadsLiveInTheBody:
         assert r.json()["data"]["status"] == "approved"
 
     def test_a_role_change_is_a_patch_on_the_user(self, admin_client, db):
-        from models.user import User
-
+        from app.models.user import User
         target = User(name="Target", email="target@example.com")
         db.add(target)
         db.commit()
@@ -330,8 +328,7 @@ class TestMutationPayloadsLiveInTheBody:
     def test_the_old_role_endpoint_is_gone(self, admin_client, db):
         """`POST /users/{id}/role` was RPC-style: a mutation named like a
         resource, with the value in a query string."""
-        from models.user import User
-
+        from app.models.user import User
         target = User(name="Target2", email="target2@example.com")
         db.add(target)
         db.commit()
@@ -348,8 +345,7 @@ class TestMutationPayloadsLiveInTheBody:
 
     @pytest.mark.parametrize("body", [{}, {"role": "superuser"}])
     def test_a_role_change_needs_a_valid_role(self, admin_client, db, body):
-        from models.user import User
-
+        from app.models.user import User
         target = User(name="Target3", email="target3@example.com")
         db.add(target)
         db.commit()
@@ -358,8 +354,7 @@ class TestMutationPayloadsLiveInTheBody:
         ).status_code == 422
 
     def test_a_non_admin_cannot_change_a_role(self, client, db):
-        from models.user import User
-
+        from app.models.user import User
         target = User(name="Target4", email="target4@example.com")
         db.add(target)
         db.commit()

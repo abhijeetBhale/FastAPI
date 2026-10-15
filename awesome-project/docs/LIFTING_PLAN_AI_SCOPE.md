@@ -245,7 +245,7 @@ invention begins.
 | Date | Decision |
 |---|---|
 | 2026-10-13 | Client reviewed Options 1–3, chose **Option 2**: theoretical CoG + hook placement with stated assumptions. |
-| 2026-10-13 | Built: `_theoretical_rigging()` in `services/lifting_plan.py`, rendered in the Markdown with an ASCII rigging diagram and the assumptions block. 24 lifting-plan tests, full suite 248 passed. |
+| 2026-10-13 | Built: `_theoretical_rigging()` in `app/services/services/lifting_plan.py`, rendered in the Markdown with an ASCII rigging diagram and the assumptions block. 24 lifting-plan tests, full suite 248 passed. |
 
 Options as originally presented, for the record:
 

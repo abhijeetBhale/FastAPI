@@ -7,10 +7,10 @@ The project follows a strict four-layer split so that HTTP concerns, validation,
 business rules, and database access stay separable:
 
 ```text
-HTTP Layer        -> routers/
-Validation Layer  -> schemas/
-Business Layer    -> services/
-Data Layer        -> models/ + database.py
+HTTP Layer        -> app/api/v1/endpoints/
+Validation Layer  -> app/schemas/
+Business Layer    -> app/services/
+Data Layer        -> app/models/ + app/database/database.py
 Database          -> PostgreSQL (via psycopg 3)
 ```
 
@@ -52,36 +52,39 @@ Database          -> PostgreSQL (via psycopg 3)
 
 ```text
 awesome-project/
-├── main.py                 # FastAPI app, CORS, router registration, root route
-├── config.py               # Settings; single source of DATABASE_URL
-├── database.py             # Engine, session factory, Base, get_db dependency
+├── main.py                 # ASGI entry point: app object, middleware, /docs
+│
+├── app/                    # the application package
+│   ├── api/
+│   │   └── v1/
+│   │       ├── api.py         # API router registration (applies /api/v1 once)
+│   │       └── endpoints/     # API endpoints, one module per resource
+│   ├── core/
+│   │   ├── config.py          # Application settings
+│   │   ├── security.py        # Password hashing, tokens, current user
+│   │   └── exceptions.py      # Custom exceptions / problem responses
+│   ├── database/
+│   │   ├── database.py        # Database connection (engine, session, get_db)
+│   │   └── base.py            # SQLAlchemy Base + the shared utcnow() clock
+│   ├── models/                # SQLAlchemy models
+│   ├── schemas/               # Pydantic schemas (requests/ and responses/)
+│   ├── services/              # Business logic
+│   ├── middleware/            # Custom middleware (context, auth, RBAC)
+│   └── utils/                 # Reusable utilities
+│
+├── alembic/                # Database migrations (env.py + versions/)
+├── detector/               # Vendored pipeline: Revamping.ipynb + models/
+├── docs/                   # Documentation
+├── scripts/                # Setup helpers, runner, OpenAPI regeneration
+├── static/index.html       # Upload UI (details -> image -> output)
+├── storage/                # Uploaded images and detection artefacts
+├── tests/
+│
+├── alembic.ini
 ├── pyproject.toml          # uv project definition (source of truth)
 ├── requirements.txt        # legacy pip pins (see Dependency notes)
 ├── uv.lock                 # resolved dependency graph
-├── alembic.ini             # Alembic config (URL now lives in config.py)
-├── static/index.html       # Upload UI (details -> image -> output)
-├── scripts/                # PostgreSQL setup helpers
-├── alembic/
-│   ├── env.py              # Uses the app's engine; autogenerate metadata
-│   └── versions/
-│       ├── 0001_initial.py         # users + addresses tables
-│       └── 0002_create_inspections.py  # inspections table
-├── models/                 # SQLAlchemy ORM tables
-│   ├── user.py
-│   └── address.py
-├── schemas/
-│   ├── requests/           # Pydantic inbound models
-│   │   ├── user.py         # UserCreate, UserUpdate
-│   │   └── address.py      # AddressCreate
-│   └── responses/          # Pydantic outbound models
-│       ├── user.py         # UserResponse
-│       └── address.py      # AddressResponse
-├── services/               # Business logic and DB operations
-│   ├── user_service.py
-│   └── address_service.py
-└── routers/                # HTTP endpoints
-    ├── user.py
-    └── address.py
+└── README.md
 ```
 
 Related docs in this repo:
@@ -143,17 +146,17 @@ app.include_router(user_router)
 app.include_router(address_router)
 ```
 
-### `config.py` + `database.py` — data layer foundation
+### `app/core/config.py` + `app/database/database.py` — data layer foundation
 
-`config.py` reads `DATABASE_URL` from the environment or `.env`; `database.py`
+`app/core/config.py` reads `DATABASE_URL` from the environment or `.env`; `app/database/database.py`
 builds the engine from it. `alembic/env.py` imports that same engine, so the app
 and the migrations can never point at different databases.
 
 ```python
-# config.py
+# app/core/config.py
 settings = get_settings()          # DATABASE_URL from env / .env
 
-# database.py
+# app/database/database.py
 engine = create_engine(settings.database_url, pool_pre_ping=True, pool_size=5, ...)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -172,7 +175,7 @@ def get_db():
 guarantees `db.close()` runs after the response is produced. See
 [POSTGRES.md](POSTGRES.md) for the full setup.
 
-### `models/` — table definitions
+### `app/models/` — table definitions
 
 `User` and `Address` inherit `Base`, so importing them registers their tables on
 `Base.metadata` (which is exactly what `alembic/env.py` reads for autogenerate).
@@ -180,7 +183,7 @@ guarantees `db.close()` runs after the response is produced. See
 `relationship(back_populates=...)` on both sides, with
 `cascade="all, delete-orphan"` so deleting a user deletes their addresses.
 
-### `schemas/` — validation boundary
+### `app/schemas/` — validation boundary
 
 | Schema | Direction | Used by |
 |---|---|---|
@@ -193,14 +196,14 @@ guarantees `db.close()` runs after the response is produced. See
 `model_config = {"from_attributes": True}` lets Pydantic read straight off SQLAlchemy
 ORM instances instead of dicts.
 
-### `services/` — business layer
+### `app/services/` — business layer
 
 Plain classes, one per aggregate. The session is injected through the constructor
 (`UserService(db)`), so services never import the engine or open connections
 themselves. Rules that live here: duplicate-email rejection, referenced-user
 existence check, existence-or-`None` returns, and the commit/refresh pairs.
 
-### `routers/` — HTTP layer
+### `app/api/v1/endpoints/` — HTTP layer
 
 Endpoints hold no business logic. They resolve the service, translate `None` into
 `404` and `ValueError` into `400`, and declare `response_model` so the response is
@@ -268,7 +271,7 @@ flowchart TD
 sequenceDiagram
     autonumber
     participant C as Client
-    participant R as routers/user.py
+    participant R as app/api/v1/endpoints/routers/user.py
     participant S as UserCreate (Pydantic)
     participant D as get_db()
     participant US as UserService
@@ -423,7 +426,7 @@ Schema is never created by app startup. It is owned by Alembic.
 
 ```mermaid
 flowchart LR
-    A[Edit model in models/] --> B["alembic revision --autogenerate -m 'msg'"]
+    A[Edit model in app/models/] --> B["alembic revision --autogenerate -m 'msg'"]
     B --> C[Alembic diffs model metadata vs DB]
     C --> D[Review the generated script in alembic/versions]
     D --> E["alembic upgrade head"]
@@ -435,7 +438,7 @@ flowchart LR
 `target_metadata = Base.metadata`, which is what makes autogenerate aware of each
 table. `compare_type=True` catches column type changes as well.
 
-It also imports the **app's engine** from `database.py`, so migrations always
+It also imports the **app's engine** from `app/database/database.py`, so migrations always
 target the same database as the app. `alembic.ini` carries no `sqlalchemy.url`.
 
 Current revision: `0002_create_inspections` (head).
@@ -543,7 +546,7 @@ Invoke-RestMethod http://127.0.0.1:8000/
 # {"message":"API is running","ui":"/ui/"}
 ```
 
-> `database.py` builds the engine but never calls `Base.metadata.create_all()`.
+> `app/database/database.py` builds the engine but never calls `Base.metadata.create_all()`.
 > If you skip the setup script, queries fail with `relation "users" does not exist`.
 
 ---
@@ -575,7 +578,7 @@ Ordered roughly by value:
 2. Replace string `ValueError`s with typed custom exceptions and a global handler,
    so routers do not repeat try/except blocks.
 3. Validate pagination bounds (`skip >= 0`, `1 <= limit <= 100` via `Query`).
-4. Move CORS origins into `config.py` too, and stop defaulting to
+4. Move CORS origins into `app/core/config.py` too, and stop defaulting to
    `allow_origins=["*"]`. (The database URL is already done.)
 5. Add tests: router tests with `TestClient` against a scratch PostgreSQL schema,
    plus service unit tests.

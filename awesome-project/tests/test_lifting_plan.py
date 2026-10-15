@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from api import API_PREFIX
-
+from app.api.v1 import API_PREFIX
 
 @pytest.fixture
 def submission(client, png_bytes, db):
@@ -22,8 +21,7 @@ def submission(client, png_bytes, db):
     assert r.status_code == 201, r.text
     insp = r.json()["data"]
 
-    from models.inspection import Inspection
-
+    from app.models.inspection import Inspection
     row = db.get(Inspection, insp["id"])
     row.detection_result = {
         "ok": True, "detected": True, "label": "Cargo-Box", "score": 16.3,
@@ -45,16 +43,14 @@ def plan_url(submission):
 
 
 def _set_result(db, insp_id, result):
-    from models.inspection import Inspection
-
+    from app.models.inspection import Inspection
     row = db.get(Inspection, insp_id)
     row.detection_result = result
     db.commit()
 
 
 def _set_overlay(db, insp_id, filename):
-    from models.inspection import Inspection
-
+    from app.models.inspection import Inspection
     row = db.get(Inspection, insp_id)
     row.detection_overlay = filename
     db.commit()
@@ -182,8 +178,7 @@ class TestCalibration:
                         files={"image": ("c.png", png_bytes(), "image/png")})
         insp = r.json()["data"]
 
-        from models.inspection import Inspection
-
+        from app.models.inspection import Inspection
         row = db.get(Inspection, insp["id"])
         row.detection_result = {
             "ok": True, "detected": True, "label": "Cargo-Box", "score": 10.0,
@@ -285,8 +280,7 @@ class TestRigging:
                         files={"image": ("c.png", png_bytes(), "image/png")})
         insp = r.json()["data"]
 
-        from models.inspection import Inspection
-
+        from app.models.inspection import Inspection
         row = db.get(Inspection, insp["id"])
         row.detection_result = {
             "ok": True, "detected": True, "label": "Cargo-Box", "score": 10.0,

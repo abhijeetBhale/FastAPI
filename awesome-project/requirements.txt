@@ -7,3 +7,6 @@ psycopg[binary]==3.2.3
 pydantic-settings==2.5.2
 PyJWT==2.10.1
 python-multipart==0.0.20
+# OpenAI Decisions API on the upload path (services/openai_decision.py);
+# also the transport behind fastapi.testclient.TestClient.
+httpx==0.28.1

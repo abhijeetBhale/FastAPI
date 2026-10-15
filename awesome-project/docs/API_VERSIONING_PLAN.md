@@ -49,10 +49,10 @@ the role endpoint merges into `PATCH /admin/users/{id}` — see §14):
 
 | Group | Paths | Prefix declared in | Where `/api/v1` goes |
 |---|---:|---|---|
-| Auth | 6 | `routers/auth.py` (`APIRouter(prefix="/auth")`) | yes |
-| Portal | 11 | `routers/inspection.py`, `routers/detection.py`, `routers/lifting_plan.py` (all `prefix="/portal"`) | yes |
-| Admin | 19 | `routers/admin.py` (`APIRouter(prefix="/admin")`) | yes |
-| Health | 2 | `routers/health.py` (no prefix) | decision D1 |
+| Auth | 6 | `app/api/v1/endpoints/routers/auth.py` (`APIRouter(prefix="/auth")`) | yes |
+| Portal | 11 | `app/api/v1/endpoints/routers/inspection.py`, `app/api/v1/endpoints/routers/detection.py`, `app/api/v1/endpoints/routers/lifting_plan.py` (all `prefix="/portal"`) | yes |
+| Admin | 19 | `app/api/v1/endpoints/routers/admin.py` (`APIRouter(prefix="/admin")`) | yes |
+| Health | 2 | `app/api/v1/endpoints/routers/health.py` (no prefix) | decision D1 |
 | Root | 1 | `main.py` (`@app.get("/")`) | no — stays |
 | — | — | FastAPI built-ins `/docs`, `/redoc`, `/openapi.json`, `/docs/oauth2-redirect` | no — stays |
 | — | — | static mount `/ui` | no — stays |
@@ -228,10 +228,10 @@ would still refuse most of it (defence in depth, and the admin router says so
 in its own docstring), but the failure mode is silent and the status codes /
 `X-Auth` header change.
 
-- `middlewares/auth.py` — `PROTECTED_PREFIXES = ("/api/v1/portal", "/api/v1/admin")`.
-- `middlewares/auth.py` — `PUBLIC_EXCEPTIONS` `"/admin/login-as"` →
+- `app/middleware/middlewares/auth.py` — `PROTECTED_PREFIXES = ("/api/v1/portal", "/api/v1/admin")`.
+- `app/middleware/middlewares/auth.py` — `PUBLIC_EXCEPTIONS` `"/admin/login-as"` →
   `"/api/v1/admin/login-as"`.
-- `middlewares/rbac.py` — `ADMIN_PREFIXES = ("/api/v1/admin",)`.
+- `app/middleware/middlewares/rbac.py` — `ADMIN_PREFIXES = ("/api/v1/admin",)`.
 - Tighten the matcher while we are here. `is_protected()` matches with
   `path.startswith(p)`, so `/portal-anything` is currently also protected. With
   a version prefix the loose form also captures `/api/v1/administer`. Use
@@ -248,13 +248,13 @@ routes, or responses will advertise dead URLs:
 
 | Location | Count | New shape |
 |---|---:|---|
-| `routers/admin.py` `links={"self": f"/admin/submissions/{id}"}` | 6 | `f"/api/v1/admin/submissions/{id}"` |
-| `routers/admin.py` `links={"self": f"/admin/users/{user.id}"}` | 2 | `f"/api/v1/admin/users/{user.id}"` |
-| `routers/inspection.py` `links={"self": f"/portal/submissions/{id}"}` | 3 | `f"/api/v1/portal/submissions/{id}"` |
-| `routers/auth.py` `links={"self": "/auth/me"}` | 3 | `"/api/v1/auth/me"` |
-| `routers/auth.py` `response.headers["Location"] = "/auth/me"` | 1 | `"/api/v1/auth/me"` |
-| `schemas/responses/inspection.py` `image_url` base (`/portal/...`, `/admin/...`) | 1 | prefixed base |
-| `schemas/responses/envelope.py` `list_links(base_path=...)` callers | 5 | `base_path` is a literal at each call site — `routers/inspection.py:123`, `routers/admin.py:99,216,644,693` |
+| `app/api/v1/endpoints/routers/admin.py` `links={"self": f"/admin/submissions/{id}"}` | 6 | `f"/api/v1/admin/submissions/{id}"` |
+| `app/api/v1/endpoints/routers/admin.py` `links={"self": f"/admin/users/{user.id}"}` | 2 | `f"/api/v1/admin/users/{user.id}"` |
+| `app/api/v1/endpoints/routers/inspection.py` `links={"self": f"/portal/submissions/{id}"}` | 3 | `f"/api/v1/portal/submissions/{id}"` |
+| `app/api/v1/endpoints/routers/auth.py` `links={"self": "/auth/me"}` | 3 | `"/api/v1/auth/me"` |
+| `app/api/v1/endpoints/routers/auth.py` `response.headers["Location"] = "/auth/me"` | 1 | `"/api/v1/auth/me"` |
+| `app/schemas/schemas/responses/inspection.py` `image_url` base (`/portal/...`, `/admin/...`) | 1 | prefixed base |
+| `app/schemas/schemas/responses/envelope.py` `list_links(base_path=...)` callers | 5 | `base_path` is a literal at each call site — `app/api/v1/endpoints/routers/inspection.py:123`, `app/api/v1/endpoints/routers/admin.py:99,216,644,693` |
 
 Prefer deriving these from the prefix constant (or `request.url.path`) over
 re-typing `"/api/v1"` across the 21 literals counted above; that is exactly the
@@ -469,7 +469,7 @@ cd awesome-project && .venv/Scripts/python -m pytest -q; echo "pytest exit=$?"
 cd awesome-project && .venv/Scripts/python -m pytest tests/test_rbac.py tests/test_docs_auth.py -q; echo "pytest exit=$?"
 
 # 4. no stale references outside the docs
-cd awesome-project && grep -rnE '"/?(portal|admin|auth|health)/' static/ tests/ routers/ schemas/ main.py | grep -v '/api/v1/' | grep -v '^Binary'
+cd awesome-project && grep -rnE '"/?(portal|admin|auth|health)/' static/ tests/ app/api/v1/endpoints/ app/schemas/ main.py | grep -v '/api/v1/' | grep -v '^Binary'
 ```
 
 Step 4 should return nothing but the deliberately-unversioned health paths and
@@ -481,8 +481,8 @@ test-local helpers.
 |---|---|---|---|
 | 1 | Decide D1 (health), D2 (lifting-plan casing), D7 (rollout) | — | — |
 | 2 | Add `API_PREFIX` and pass it to `include_router` | 1 | `main.py` |
-| 3 | Move the middleware gates + tighten the prefix matcher | 2 | `middlewares/auth.py`, `middlewares/rbac.py` |
-| 4 | Update generated links/`Location`/`image_url` | 2 | `routers/*.py`, `schemas/responses/*.py` |
+| 3 | Move the middleware gates + tighten the prefix matcher | 2 | `app/middleware/middlewares/auth.py`, `app/middleware/middlewares/rbac.py` |
+| 4 | Update generated links/`Location`/`image_url` | 2 | `app/api/v1/endpoints/routers/*.py`, `app/schemas/schemas/responses/*.py` |
 | 5 | Update the browser client | 2 | `static/index.html` |
 | 6 | Add `API` constant to `conftest.py`; rewrite test literals | 3, 4 | `tests/*.py` |
 | 7 | Add prefix regressions (401/403, links resolve, pagination links) | 6 | `tests/test_rbac.py`, `tests/test_bug_regressions.py` |
@@ -535,7 +535,7 @@ than either state on its own because both failures are silent.
 
 | Area | Change |
 |---|---|
-| Base path | New `api.py` holding `API_PREFIX = "/api/v1"`; `main.py` passes it to six `include_router()` calls — the version appears **once**, not in any router |
+| Base path | New `app/api/v1/api.py` holding `API_PREFIX = "/api/v1"`; `main.py` passes it to six `include_router()` calls — the version appears **once**, not in any router |
 | Route groups | `auth`, `portal`, `admin` unchanged as groups; only the version segment is new |
 | Middleware gates | `PROTECTED_PREFIXES`, `ADMIN_PREFIXES`, `PUBLIC_EXCEPTIONS` moved to the prefixed paths, in the same commit as the routes; the prefix matcher tightened from `startswith(p)` to segment-aware matching (`/api/v1/administrate` is no longer treated as admin-only) |
 | Generated URLs | 21 sites — `links.self`, `Location`, `image_url`, the five `list_links(base_path=…)` callers, the lifting-plan document's `overlay_url` — all build from `API_PREFIX` |
@@ -598,6 +598,6 @@ The result of the merge in the first bullet: **38 paths / 44 operations**.
   need a `request_hash` column on `idempotency_keys` (schema migration). The
   replay *header* was already done in an earlier pass.
 - `README.md` still describes the original `/users/` + `/addresses/` scaffold in
-  its architecture sections (title, tables of contents, `models/` + `schemas/`
+  its architecture sections (title, tables of contents, `app/models/` + `app/schemas/`
   narrative). That is pre-existing debt unrelated to versioning; the API
   reference section itself was corrected here.

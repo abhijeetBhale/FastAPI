@@ -18,9 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from api import API_PREFIX
-from services.security import COOKIE_NAME
-
+from app.api.v1 import API_PREFIX
+from app.core.security import COOKIE_NAME
 
 def at(payload: dict, path: str):
     """Follow a dotted path, asserting each segment exists.

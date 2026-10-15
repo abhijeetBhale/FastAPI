@@ -54,7 +54,7 @@ sides meet at a **file**:
 
 ```mermaid
 flowchart LR
-    A["FastAPI<br/>services/detection.py"] -->|"subprocess.run<br/>timeout=300s"| B["scripts/detect_runner.py<br/>(detection venv)"]
+    A["FastAPI<br/>app/services/services/detection.py"] -->|"subprocess.run<br/>timeout=300s"| B["scripts/detect_runner.py<br/>(detection venv)"]
     B --> C["exec notebook cells<br/>7, 8, 8b, 8c, 9, 10"]
     C --> D["detector/Revamping.ipynb<br/>+ detector/models/"]
     B -->|"result.json + overlay.png"| E["storage/detection/"]
@@ -75,11 +75,11 @@ the optional `DETECTION_PROJECT_DIR` override. See `detector/README.md`.
 |---|---|
 | `detector/` | Vendored pipeline: `Revamping.ipynb` + `models/cargo_obb_best.pt` (see `detector/README.md`) |
 | `scripts/detect_runner.py` | Executes the notebook cells, writes `result.json` + `overlay.png` |
-| `services/detection.py` | The subprocess bridge: availability, timeout, concurrency, parsing |
-| `routers/detection.py` | Portal HTTP surface |
-| `routers/admin.py` | Admin read-only surface |
-| `schemas/responses/detection.py` | Response shapes |
-| `models/inspection.py` | `detection_result`, `detected_at`, `detection_overlay` |
+| `app/services/services/detection.py` | The subprocess bridge: availability, timeout, concurrency, parsing |
+| `app/api/v1/endpoints/routers/detection.py` | Portal HTTP surface |
+| `app/api/v1/endpoints/routers/admin.py` | Admin read-only surface |
+| `app/schemas/schemas/responses/detection.py` | Response shapes |
+| `app/models/models/inspection.py` | `detection_result`, `detected_at`, `detection_overlay` |
 | `alembic/versions/0011_detection_results.py` | The three columns |
 | `tests/test_detection.py` | 53 tests |
 

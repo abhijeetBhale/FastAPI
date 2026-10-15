@@ -382,6 +382,22 @@ async function refreshAdmin() {
   updateCheckboxes();
 }
 
+// The AI decision (OpenAI Decisions API, evaluated while the upload is still
+// being handled) rides on every submission: `decision_status` is
+// not_run | ok | error and `ai_recommendation` is the verdict these
+// approve/reject buttons sit next to. `not_run` shows nothing — most rows
+// predate the integration or have the feature switched off.
+function aiHint(i) {
+  if (i.decision_status === "error")
+    return `<div class="hint" style="margin-bottom:9px">AI decision unavailable — review manually.</div>`;
+  if (i.decision_status !== "ok") return "";
+  const p = i.ai_answers && i.ai_answers.cargo_present;
+  const pct = p && typeof p.probability === "number"
+    ? ` (cargo ${Math.round(p.probability * 100)}%)` : "";
+  const rec = i.ai_recommendation === "approve" ? "approve" : "review";
+  return `<div class="hint" style="margin-bottom:9px">AI: <strong>${rec}</strong>${pct}</div>`;
+}
+
 function adminCard(i) {
   const tags = (i.tags || []).map(t => t.name);
   const done = i.status === "approved" || i.status === "rejected";
@@ -400,6 +416,7 @@ function adminCard(i) {
           ${i.image_width}×${i.image_height} px · ${new Date(i.created_at).toLocaleDateString()}
         </div>
         ${i.status_note ? `<div class="hint" style="margin-bottom:9px">Note: ${escapeHtml(i.status_note)}</div>` : ""}
+        ${aiHint(i)}
         ${done ? `<div class="hint">Reviewed${i.reviewed_at ? " " + new Date(i.reviewed_at).toLocaleDateString() : ""}</div>`
                : `<label class="hint" style="display:flex;gap:6px;align-items:center;margin-bottom:9px">
                     <input type="checkbox" data-chk="${i.id}" style="width:auto"

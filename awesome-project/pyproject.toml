@@ -5,6 +5,10 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.0",
     "fastapi[standard]>=0.142.2",
+    # Imported directly by services/openai_decision.py (Decisions API) — and
+    # already present transitively for fastapi.testclient; declared because
+    # the app now depends on it in its own right.
+    "httpx>=0.28.0",
     "psycopg[binary]>=3.2.0",
     "pydantic-settings>=2.5.0",
     "pyjwt>=2.15.1",

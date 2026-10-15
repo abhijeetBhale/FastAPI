@@ -45,7 +45,7 @@ Without a migration tool the usual options are all bad:
 
 | Approach | Problem |
 |---|---|
-| `Base.metadata.create_all(engine)` at startup | Only ever *creates*. It never alters, drops, or renames. Existing tables are silently left as-is. This is why `database.py` in this project does **not** call it. |
+| `Base.metadata.create_all(engine)` at startup | Only ever *creates*. It never alters, drops, or renames. Existing tables are silently left as-is. This is why `app/database/database.py` in this project does **not** call it. |
 | Hand-written `ALTER TABLE` in a shell | No history, no ordering, no record of what ran, no way to reverse. Not reproducible across environments. |
 | "Delete the DB and start over" | Destroys data. Unacceptable in production. |
 
@@ -140,7 +140,7 @@ Three keys do the real work:
   `env.py` can import `database`, `models.user`, `models.address`. Without this,
   autogenerate would import nothing and see an empty `MetaData`.
 - **`sqlalchemy.url`** — used only by `env.py`'s `engine_from_config`. Note this
-  URL is **duplicated** with `database.py`'s `SQLALCHEMY_DATABASE_URL`. They
+  URL is **duplicated** with `app/database/database.py`'s `SQLALCHEMY_DATABASE_URL`. They
   currently agree (`sqlite:///./app.db`), which is required. See
   [§20](#20-how-this-project-should-evolve).
 
@@ -212,7 +212,7 @@ history — never edit one after it has been applied to a shared database.**
 This is the single most misunderstood part, so it is worth being precise.
 
 `--autogenerate` cannot scan your source tree for classes. It has no idea your
-models are in `models/`. It only ever looks at `context.get_context()` metadata,
+models are in `app/models/`. It only ever looks at `context.get_context()` metadata,
 which is `target_metadata` from `env.py`.
 
 ```mermaid
@@ -230,13 +230,13 @@ flowchart LR
 Two consequences follow:
 
 1. **A model not imported in `env.py` is invisible to Alembic.** Add a new
-   `models/invoice.py`, forget the import, run autogenerate, and you get an empty
+   `app/models/models/invoice.py`, forget the import, run autogenerate, and you get an empty
    script with no error. Dropping the table entirely is the same failure mode.
 2. **Models are collected by import side effects, not by discovery.** In SQLAlchemy
    2.0 declarative style, `Base` tracks every subclass that defines `__tablename__`
    in `Base.metadata.tables` at class-creation time.
 
-The upstream fix is a `models/__init__.py` that imports everything, so a single
+The upstream fix is a `app/models/models/__init__.py` that imports everything, so a single
 `from models import User, Address` in `env.py` pulls in the whole set. The current
 two-line version works but must be extended by hand as models are added.
 
@@ -307,7 +307,7 @@ running autogenerate again and finding it clean.
 
 ## 6. Verified walkthrough in this repo
 
-Run in a throwaway copy of the project (real `app.db` and `models/` untouched;
+Run in a throwaway copy of the project (real `app.db` and `app/models/` untouched;
 scratch directory deleted afterwards).
 
 ### Baseline
@@ -325,7 +325,7 @@ No new upgrade operations detected.
 `alembic current` reads `alembic_version`; `alembic check` runs the autogenerate
 diff and fails if anything is pending. That "no pending operations" result confirms
 models and database are currently in sync — `0001_initial` genuinely matches
-`models/user.py` and `models/address.py`.
+`app/models/models/user.py` and `app/models/models/address.py`.
 
 Note the `Will assume non-transactional DDL` warning. SQLite cannot roll back DDL,
 so if a migration fails halfway the database is left partially changed. The
@@ -333,7 +333,7 @@ consequences are in [§19](#19-failure-modes-and-fixes).
 
 ### Step 1 — change the model
 
-Added to `models/user.py`:
+Added to `app/models/models/user.py`:
 
 ```python
 phone: Mapped[str] = mapped_column(String(20), nullable=True)
@@ -429,7 +429,7 @@ sequenceDiagram
     participant Tpl as script.py.mako
     participant DB as app.db
 
-    Dev->>Dev: edit models/user.py
+    Dev->>Dev: edit app/models/models/user.py
     Dev->>CLI: alembic revision --autogenerate -m "add phone"
     CLI->>Env: run env.py (online mode)
     Env->>DB: connect via sqlalchemy.url
@@ -889,7 +889,7 @@ def run_migrations_online():
 
 Alembic ships templates for this: `alembic init --template async` (and
 `pyproject_async`). This repo uses the **online synchronous** template because
-`database.py` builds a plain sync `create_engine`.
+`app/database/database.py` builds a plain sync `create_engine`.
 
 ---
 
@@ -926,7 +926,7 @@ Global flags: `-c/--config` (alternate config, may be `pyproject.toml`),
 ### Workflow for this repo
 
 ```powershell
-# 1. edit models/user.py
+# 1. edit app/models/models/user.py
 # 2. draft the migration
 uv run alembic revision --autogenerate -m "add phone to users"
 # 3. READ the generated file; fix ordering, nullability, batch mode, data steps
@@ -955,7 +955,7 @@ flowchart TD
 
 1. **Never call `Base.metadata.create_all()` in a real app.** It cannot alter
    anything and it makes Alembic's version table meaningless. This project is
-   already correct here — `database.py` only builds the engine.
+   already correct here — `app/database/database.py` only builds the engine.
 2. **Migrations ship with the model change, in the same commit.** A model column
    with no migration breaks every other environment.
 3. **One logical change per revision.** Mixed revisions are impossible to review,
@@ -971,7 +971,7 @@ flowchart TD
    database, for every migration, in CI.
 9. **Run `alembic check` in CI.** It fails the build if models and migrations drift
    apart.
-10. **Keep `alembic.ini`'s `sqlalchemy.url` and `database.py` in lockstep.** Better:
+10. **Keep `alembic.ini`'s `sqlalchemy.url` and `app/database/database.py` in lockstep.** Better:
     have `env.py` reuse the app's engine (see §20).
 11. **No destructive changes in the same release as code that depends on the old
     shape.** Expand/contract: release N adds the new column and writes both, release
@@ -984,7 +984,7 @@ flowchart TD
 
 ### `no such table: users`
 
-The database has no tables. `database.py` creates the engine but never calls
+The database has no tables. `app/database/database.py` creates the engine but never calls
 `create_all()`, and `alembic upgrade head` was never run.
 
 ```powershell
@@ -1078,7 +1078,7 @@ traceback. Run with `--raiseerr` to see the full chain.
 
 Ordered by value. Each item names the file it touches.
 
-1. **Single source of truth for the DB URL.** `alembic.ini` and `database.py` both
+1. **Single source of truth for the DB URL.** `alembic.ini` and `app/database/database.py` both
    hardcode `sqlite:///./app.db`. Have `env.py` import the app's engine instead:
    ```python
    from database import engine
@@ -1090,7 +1090,7 @@ Ordered by value. Each item names the file it touches.
    ```
    Then `sqlalchemy.url` becomes irrelevant and the two can never drift.
 
-2. **`models/__init__.py` re-exporting every model**, then `env.py` imports from
+2. **`app/models/models/__init__.py` re-exporting every model**, then `env.py` imports from
    the package. Removes the "forgot to import the new model" failure mode.
 
 3. **Switch migrations to `op.get_bind()`** so they share the app's engine and

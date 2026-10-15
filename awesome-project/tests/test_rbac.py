@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from api import API_PREFIX
-from models.user import User
-from services.rbac import (
+from app.api.v1 import API_PREFIX
+from app.models.user import User
+from app.services.rbac import (
     P_AUDIT_READ,
     P_SUBMISSIONS_CREATE,
     P_SUBMISSIONS_READ_ANY,
@@ -234,8 +234,7 @@ class TestAdminReview:
         assert r.status_code == 422
 
     def test_decision_is_audited(self, client, users, db):
-        from models.audit_log import AuditLog
-
+        from app.models.audit_log import AuditLog
         as_user(client, "boss@example.com")
         client.post(f"{API_PREFIX}/admin/submissions/{users['reg']['id']}/approve")
 

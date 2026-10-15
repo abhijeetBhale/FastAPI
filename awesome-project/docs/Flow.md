@@ -52,56 +52,56 @@ The image **bytes never go into the database**. The file is written to
 ```text
 awesome-project/
 ├── main.py                  # composition root: app, middleware, routers, static
-├── config.py                # Settings — single source of DATABASE_URL
-├── database.py              # engine, session factory, Base, get_db
-├── errors.py                # global exception handlers
 │
-├── middlewares/             # cross-cutting request pipeline
-│   ├── __init__.py          #   install_middlewares() + ordering
-│   ├── context.py           #   request id, timing, logging
-│   ├── auth.py              #   401 gate on /portal, /admin
-│   └── rbac.py              #   403 gate on /admin
-│
-├── models/                  # SQLAlchemy tables
-│   ├── __init__.py          #   imports everything (Alembic depends on this)
-│   ├── user.py              #   users
-│   ├── inspection.py        #   inspections
-│   ├── cargo_type.py        #   cargo_types (lookup)
-│   ├── tag.py               #   tags
-│   ├── inspection_tag.py    #   inspection_tags (join table)
-│   ├── audit_log.py         #   audit_log
-│   └── idempotency_key.py   #   idempotency_keys
-│
-├── schemas/
-│   ├── requests/            # inbound validation
-│   ├── responses/           # outbound serialisation
-│   ├── validators.py        #   phone normalisation
-│   └── errors.py            #   JSON-safe validation errors
-│
-├── services/                # business logic
-│   ├── inspection_service.py
-│   ├── user_service.py
-│   ├── auth_service.py
-│   ├── audit_service.py
-│   ├── idempotency_service.py
-│   ├── health_service.py
-│   ├── query.py             #   pagination envelope
-│   ├── security.py          #   password hashing, JWT, get_current_user
-│   ├── rbac.py              #   roles and permissions
-│   └── detection.py         #   subprocess bridge to the SAM/YOLO pipeline
-│
-├── routers/                 # HTTP endpoints
-│   ├── auth.py  user.py  health.py
-│   ├── inspection.py        #   cross-user router + portal router
-│   ├── detection.py         #   portal detection router
-│   └── admin.py             #   admin router
+├── app/                     # the application package
+│   ├── api/v1/
+│   │   ├── api.py           #   router registration (applies /api/v1 once)
+│   │   └── endpoints/       #   auth, inspection, detection, admin, health, …
+│   ├── core/
+│   │   ├── config.py        #   Settings — single source of DATABASE_URL
+│   │   ├── security.py      #   password hashing, JWT, get_current_user
+│   │   └── exceptions.py    #   global exception handlers
+│   ├── database/
+│   │   ├── database.py      #   engine, session factory, get_db
+│   │   └── base.py          #   declarative Base + the utcnow() clock
+│   ├── models/              #   SQLAlchemy tables
+│   │   ├── __init__.py      #     imports everything (Alembic depends on this)
+│   │   ├── user.py          #     users
+│   │   ├── inspection.py    #     inspections
+│   │   ├── cargo_type.py    #     cargo_types (lookup)
+│   │   ├── tag.py           #     tags
+│   │   ├── inspection_tag.py   #  inspection_tags (join table)
+│   │   ├── audit_log.py     #     audit_log
+│   │   └── idempotency_key.py  #  idempotency_keys
+│   ├── schemas/
+│   │   ├── requests/        #   inbound validation
+│   │   ├── responses/       #   outbound serialisation
+│   │   ├── validators.py    #   phone normalisation
+│   │   └── errors.py        #   JSON-safe validation errors
+│   ├── services/            #   business logic
+│   │   ├── inspection_service.py
+│   │   ├── user_service.py
+│   │   ├── auth_service.py
+│   │   ├── audit_service.py
+│   │   ├── idempotency_service.py
+│   │   ├── health_service.py
+│   │   ├── query.py         #     pagination envelope
+│   │   ├── rbac.py          #     roles and permissions
+│   │   ├── openai_decision.py  #  Decisions API client (opt-in)
+│   │   └── detection.py     #     subprocess bridge to the SAM/YOLO pipeline
+│   ├── middleware/          #   cross-cutting request pipeline
+│   │   ├── __init__.py      #     install_middlewares() + ordering
+│   │   ├── context.py       #     request id, timing, logging
+│   │   ├── auth.py          #     401 gate on /portal, /admin
+│   │   └── rbac.py          #     403 gate on /admin
+│   └── utils/               #   reusable helpers with no domain knowledge
 │
 ├── static/index.html        # the whole frontend
-├── alembic/versions/        # 0001 … 0011
+├── alembic/versions/        # 0001 … 0012
 ├── detector/                # vendored pipeline: Revamping.ipynb + models/
 ├── scripts/                 # setup_postgres, start_postgres, create_admin,
 │                            #   detect_runner (runs the notebook cells)
-└── tests/                   # 221 tests
+└── tests/                   # the test suite
 ```
 
 ### The one component outside this tree
@@ -110,7 +110,7 @@ Only the **interpreter** lives outside this repo: the cargo pipeline runs under
 a separate ~5.5 GB virtualenv (torch, ultralytics, segment-anything,
 transformers, Open3D) that cannot be merged into this app's environment. The
 pipeline code and weights themselves are vendored in `detector/` (see
-`detector/README.md`), so `services/detection.py` invokes
+`detector/README.md`), so `app/services/services/detection.py` invokes
 `scripts/detect_runner.py` as a subprocess and the two sides meet at a JSON
 file. See `DETECTION.md`.
 
@@ -121,26 +121,26 @@ file. See `DETECTION.md`.
 Requests flow downward. Each layer may only talk to the one below it.
 
 ```text
-routers/     HTTP. Parses request, resolves dependencies, shapes the response.
-             Knows nothing about SQL.
+app/api/v1/endpoints/  HTTP. Parses request, resolves dependencies, shapes the
+             response. Knows nothing about SQL.
     ↓
-services/    Business rules and database access. Knows nothing about HTTP —
+app/services/  Business rules and database access. Knows nothing about HTTP —
              it receives a Session and plain Python values.
     ↓
-models/      Table definitions and relationships. Knows nothing about either.
+app/models/  Table definitions and relationships. Knows nothing about either.
     ↓
-database.py  Engine, session factory, and the get_db dependency.
+app/database/database.py  Engine, session factory, and the get_db dependency.
 ```
 
 **Why this matters:** swapping PostgreSQL for something else touches
-`database.py` and the driver, and nothing else. Adding a field touches the model,
+`app/database/database.py` and the driver, and nothing else. Adding a field touches the model,
 a schema, and a migration — never a router's SQL.
 
 Two supporting layers sit beside them:
 
-- `middlewares/` — cross-cutting concerns applied to every request before any
+- `app/middleware/` — cross-cutting concerns applied to every request before any
   router sees it.
-- `schemas/` — the validation boundary. `requests/` for inbound, `responses/` for
+- `app/schemas/` — the validation boundary. `requests/` for inbound, `responses/` for
   outbound, and `responses/` doubles as the OpenAPI documentation.
 
 ---
@@ -272,9 +272,9 @@ sequenceDiagram
     participant MC as Context MW
     participant AM as Auth MW
     participant RM as RBAC MW
-    participant R as routers/inspection.py
-    participant SEC as services/security.py
-    participant SVC as services/inspection_service.py
+    participant R as app/api/v1/endpoints/routers/inspection.py
+    participant SEC as app/core/security.py
+    participant SVC as app/services/services/inspection_service.py
     participant PG as PostgreSQL
 
     B->>MC: GET /api/v1/portal/submissions?skip=0&limit=6
@@ -347,9 +347,9 @@ if not raw and credentials and credentials.scheme.lower() == "bearer":
     raw = credentials.credentials
 ```
 
-Both layers must accept it. `middlewares/auth.py` runs *before routing*, so a
+Both layers must accept it. `app/middleware/middlewares/auth.py` runs *before routing*, so a
 valid bearer token rejected there would never reach the dependency that would
-have accepted it — `services/detection.py` and the portal router share the same
+have accepted it — `app/services/services/detection.py` and the portal router share the same
 `extract_token()` helper for exactly this reason.
 
 Without the `HTTPBearer` scheme declared, `/docs` renders **no Authorize button
@@ -392,7 +392,7 @@ sign-in screen rather than the dashboard.
 ```text
 users.role  ('user' | 'admin')     CHECK constraint enforces the pair
       ↓
-ROLE_PERMISSIONS                  services/rbac.py
+ROLE_PERMISSIONS                  app/services/services/rbac.py
       ↓
 require_permission(P_...)         dependency on each route
 ```
@@ -584,8 +584,8 @@ The one request in this app that leaves the process. Full detail in
 sequenceDiagram
     autonumber
     participant B as Browser
-    participant R as routers/detection.py
-    participant S as services/detection.py
+    participant R as app/api/v1/endpoints/routers/detection.py
+    participant S as app/services/services/detection.py
     participant P as scripts/detect_runner.py<br/>(detection venv)
     participant NB as Revamping.ipynb
     participant PG as PostgreSQL
@@ -813,7 +813,7 @@ rows = db.execute(stmt.offset(skip).limit(limit)).scalars().unique().all()
 ```
 
 Two queries: the count for page controls, the page itself. `skip` and `limit` are
-clamped in `services/query.py` **and** constrained in the router with
+clamped in `app/services/services/query.py` **and** constrained in the router with
 `Query(ge=0)` / `Query(ge=1, le=100)`.
 
 Before those bounds existed, `?limit=-5` reached PostgreSQL and returned a raw
@@ -871,7 +871,7 @@ dictionary — never interpolated into SQL. `?sort=id;DROP TABLE users` returns 
 **`exc.errors()` is not always serialisable.** It carries the raw exception under
 `ctx`, so passing it to `HTTPException(detail=...)` made Starlette's `json.dumps`
 fail with `TypeError: Object of type ValueError is not JSON serializable` — a
-client error became a **500**. `schemas/errors.py::jsonable_errors()` strips the
+client error became a **500**. `app/schemas/schemas/errors.py::jsonable_errors()` strips the
 unserialisable parts.
 
 **Constraint violations are client errors.** An `IntegrityError` returning 500
@@ -1037,10 +1037,10 @@ Drops the database, recreates it, replays all migrations. **Deletes everything.*
 | Learn the SQL patterns | `tests/test_query_patterns.py` — each test names its pattern |
 | Understand a bug that was fixed | `tests/test_bug_regressions.py` — one test per measured defect |
 | See the security properties | `tests/test_rbac.py` — isolation, self-approval, 404-vs-403 |
-| Learn password/JWT handling | `services/security.py` |
-| Learn roles and permissions | `services/rbac.py` |
-| Understand request pipeline | `middlewares/` — each file is short and commented |
-| Trace a request | `routers/inspection.py` → `services/inspection_service.py` |
+| Learn password/JWT handling | `app/core/security.py` |
+| Learn roles and permissions | `app/services/services/rbac.py` |
+| Understand request pipeline | `app/middleware/` — each file is short and commented |
+| Trace a request | `app/api/v1/endpoints/routers/inspection.py` → `app/services/services/inspection_service.py` |
 | Learn migrations | `Alembic.md` — full deep dive, autogenerate internals, batch mode |
 | Set up PostgreSQL | `POSTGRES.md` and `POSTGRES_COMMANDS.md` |
 

@@ -23,9 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from api import API_PREFIX
-from services import detection
-
+from app.api.v1 import API_PREFIX
+from app.services import detection
 
 # ---- fakes ---------------------------------------------------------------
 DETECTED_RESULT = {
@@ -177,8 +176,7 @@ class TestAvailability:
     def test_disabled_is_reported_as_such(self, authed, monkeypatch):
         """Must not assert on whatever `.env` happens to say â€” the test controls
         the setting, so it means the same thing on every machine."""
-        from config import get_settings
-
+        from app.core.config import get_settings
         monkeypatch.setattr(get_settings(), "detection_enabled", False)
         r = authed.get(API_PREFIX + "/portal/detection/availability")
         assert r.status_code == 200
@@ -189,8 +187,7 @@ class TestAvailability:
     def test_the_default_is_off(self):
         """A fresh install must not change the upload path until someone opts
         in, so the shipped default matters."""
-        from config import Settings
-
+        from app.core.config import Settings
         assert Settings(_env_file=None).detection_enabled is False
 
     def test_availability_needs_a_session(self, client):
@@ -206,8 +203,7 @@ class TestAvailability:
         assert body["data"]["supports_measurement"] is False
 
     def test_a_missing_interpreter_is_explained(self, monkeypatch):
-        from config import get_settings
-
+        from app.core.config import get_settings
         settings = get_settings()
         monkeypatch.setattr(settings, "detection_enabled", True)
         monkeypatch.setattr(settings, "detection_python", r"Z:\nope\python.exe")
@@ -216,8 +212,7 @@ class TestAvailability:
         assert "Detector interpreter not found" in why
 
     def test_a_missing_notebook_is_explained(self, monkeypatch):
-        from config import get_settings
-
+        from app.core.config import get_settings
         settings = get_settings()
         monkeypatch.setattr(settings, "detection_enabled", True)
         monkeypatch.setattr(settings, "detection_project_dir", r"Z:\nope")
@@ -291,8 +286,7 @@ class TestDetect:
     def test_the_report_is_persisted(self, client, submission, fake_run,
                                      enabled, db):
         """The result must survive the request â€” a GET has to find it."""
-        from models.inspection import Inspection
-
+        from app.models.inspection import Inspection
         fake_run()
         client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
 
@@ -306,8 +300,7 @@ class TestDetect:
                                            enabled, db):
         """The pipeline's volume is relative, not metric. Writing it into a
         column named `volume_m3` would be a silent lie."""
-        from models.inspection import Inspection
-
+        from app.models.inspection import Inspection
         fake_run()
         client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         insp = db.get(Inspection, submission["id"])
@@ -331,8 +324,7 @@ class TestDetect:
     def test_a_refusal_is_still_persisted(self, client, submission, fake_run,
                                           enabled, db):
         """'Ran, found nothing' must not be mistaken for 'never ran'."""
-        from models.inspection import Inspection
-
+        from app.models.inspection import Inspection
         fake_run(REFUSED_RESULT, overlay=False)
         client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
         insp = db.get(Inspection, submission["id"])
@@ -344,8 +336,7 @@ class TestDetect:
     ):
         """A 200 here would tell the caller the detection worked. It did not.
         The RFC 9457 problem object is the entire body."""
-        from models.inspection import Inspection
-
+        from app.models.inspection import Inspection
         fake_run(FAILED_RESULT, overlay=False)
         r = client.post(f"{API_PREFIX}/portal/submissions/{submission['id']}/detect")
 
@@ -434,9 +425,8 @@ class TestDetect:
     def test_a_missing_image_file_is_404(self, client, submission, fake_run,
                                          enabled, db):
         """The row exists but the bytes are gone â€” not worth a 30 s run."""
-        from models.inspection import Inspection
-        from services.inspection_service import resolve_image_path
-
+        from app.models.inspection import Inspection
+        from app.services.inspection_service import resolve_image_path
         insp = db.get(Inspection, submission["id"])
         calls = fake_run()
         resolve_image_path(insp).unlink()
@@ -636,7 +626,7 @@ class TestDetectionAuthorisation:
 
 # ---- the subprocess contract --------------------------------------------
 class TestRunnerContract:
-    """What `services/detection.py` expects of the runner subprocess.
+    """What `app/services/detection.py` expects of the runner subprocess.
 
     These guard the seam between the two repositories. If the runner's output
     contract changes, these fail first â€” before a 30-second pipeline run has to
@@ -660,15 +650,13 @@ class TestRunnerContract:
 
     def test_an_empty_project_dir_resolves_to_the_vendored_copy(self, monkeypatch):
         """The normal case: DETECTION_PROJECT_DIR empty means 'use our own'."""
-        from config import get_settings
-
+        from app.core.config import get_settings
         monkeypatch.setattr(get_settings(), "detection_project_dir", "")
         assert detection.resolve_project_dir() == detection.DETECTOR_DIR
 
     def test_an_explicit_project_dir_still_wins(self, monkeypatch):
         """The escape hatch for trying an upstream checkout stays working."""
-        from config import get_settings
-
+        from app.core.config import get_settings
         monkeypatch.setattr(get_settings(), "detection_project_dir",
                             r"C:\somewhere\else")
         assert str(detection.resolve_project_dir()) == r"C:\somewhere\else"

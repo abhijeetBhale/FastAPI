@@ -19,6 +19,13 @@ os.environ.setdefault(
     "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/awesome_project_test",
 )
 os.environ.setdefault("SQL_ECHO", "false")
+# No test may call the real OpenAI Decisions API: it costs money, needs a
+# key, and would make the suite depend on the network. Real env vars win over
+# `.env` in pydantic-settings, so this setdefault pins the feature off even
+# when a developer's `.env` has it switched on. Individual tests re-enable it
+# with monkeypatch and a stubbed `decide`.
+os.environ.setdefault("OPENAI_DECISION_ENABLED", "false")
+os.environ.setdefault("OPENAI_API_KEY", "")
 
 import pytest  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
@@ -28,8 +35,8 @@ from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 
 # The app's own base-path constant, so every request in the suite is built from
-# the same value the routes are registered with (see `api.py`).
-from api import API_PREFIX  # noqa: E402
+# the same value the routes are registered with (see `app/api/v1/__init__.py`).
+from app.api.v1 import API_PREFIX  # noqa: E402
 
 TEST_URL = os.environ["DATABASE_URL"]
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,7 +55,7 @@ def _isolated_image_storage(tmp_path_factory):
     Redirecting the directory is better than cleaning up afterwards: nothing is
     created in the first place, so a crashed run cannot leave litter either.
     """
-    import services.inspection_service as inspection_service
+    import app.services.inspection_service as inspection_service
 
     sandbox = tmp_path_factory.mktemp("inspection-images")
     previous = inspection_service.STORAGE_DIR
@@ -111,7 +118,7 @@ def client(db):
     """
     from fastapi.testclient import TestClient
 
-    import database
+    from app.database import database
     import main
 
     def override_get_db():
@@ -140,10 +147,9 @@ def admin_client(db):
     """
     from fastapi.testclient import TestClient
 
-    import database
+    from app.database import database
     import main
-    from models.user import User
-
+    from app.models.user import User
     def override_get_db():
         try:
             yield db
@@ -157,7 +163,7 @@ def admin_client(db):
     db.add(User(name="Admin", email="admin@example.com",
                 role="admin",
                 password_hash=__import__(
-                    "services.security", fromlist=["hash_password"]
+                    "app.core.security", fromlist=["hash_password"]
                 ).hash_password("quay-crane-42")))
     db.commit()
 

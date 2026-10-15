@@ -1,7 +1,7 @@
 # PostgreSQL — Step-by-Step Guide
 
 This project runs on **PostgreSQL only**. SQLite has been removed: there is no
-`app.db`, no SQLite branch in `database.py`, and no cross-database migration
+`app.db`, no SQLite branch in `app/database/database.py`, and no cross-database migration
 script. The database is created empty and populated only by the API.
 
 ---
@@ -27,15 +27,15 @@ The single most important structural change: there is **one** connection string,
 and everything reads it.
 
 ```text
-.env  ──DATABASE_URL──>  config.py  (Settings)
+.env  ──DATABASE_URL──>  app/core/config.py  (Settings)
                               │
-                              ├──>  database.py   builds the engine
+                              ├──>  app/database/database.py   builds the engine
                               │
                               └──>  alembic/env.py imports that same engine
 ```
 
 So `alembic upgrade head` and the running app always target the same database.
-Previously the URL was written in both `database.py` and `alembic.ini`, which
+Previously the URL was written in both `app/database/database.py` and `alembic.ini`, which
 meant editing one could silently point the app and the migrations at different
 databases. `alembic.ini` no longer contains `sqlalchemy.url` at all.
 

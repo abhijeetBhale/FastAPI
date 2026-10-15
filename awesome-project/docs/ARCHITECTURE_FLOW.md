@@ -5,21 +5,33 @@
 ```text
 awesome-project/
 ├── main.py
-├── database.py
+├── app/
+│   ├── api/v1/
+│   │   ├── api.py
+│   │   └── endpoints/
+│   ├── core/
+│   │   ├── config.py
+│   │   ├── security.py
+│   │   └── exceptions.py
+│   ├── database/
+│   │   ├── database.py
+│   │   └── base.py
+│   ├── models/
+│   ├── schemas/
+│   ├── services/
+│   ├── middleware/
+│   └── utils/
+├── alembic/
+├── detector/
+├── docs/
+├── scripts/
+├── static/
+├── storage/
+├── tests/
+├── alembic.ini
 ├── pyproject.toml
 ├── requirements.txt
-├── models/
-│   ├── user.py
-│   └── address.py
-├── schemas/
-│   ├── user.py
-│   └── address.py
-├── services/
-│   ├── user_service.py
-│   └── address_service.py
-└── routers/
-    ├── user.py
-    └── address.py
+└── README.md
 ```
 
 ## Complete Application Flow
@@ -64,7 +76,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     Start[Application Starts] --> LoadMain[Load main.py]
-    LoadMain --> LoadDatabase[Load database.py]
+    LoadMain --> LoadDatabase[Load app/database/database.py]
     LoadMain --> LoadModels[Import User and Address Models]
     LoadModels --> RegisterModels[Register Models with Base.metadata]
     RegisterModels --> CreateApp[Create FastAPI App]
@@ -101,7 +113,7 @@ POST /users/
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Router as routers/user.py
+    participant Router as app/api/v1/endpoints/routers/user.py
     participant Schema as UserCreate
     participant DBDependency as get_db()
     participant Service as UserService
@@ -155,7 +167,7 @@ flowchart TD
 - Includes the user and address routers.
 - Provides the root endpoint: `GET /`.
 
-### `database.py`
+### `app/database/database.py`
 
 - Creates the SQLite engine.
 - Creates the SQLAlchemy session factory.
@@ -343,9 +355,9 @@ The migration environment is in `alembic/`, with configuration in `alembic.ini` 
 ## Architecture Summary
 
 ```text
-HTTP Layer        -> routers/
-Validation Layer  -> schemas/
-Business Layer    -> services/
-Data Layer        -> models/ + database.py
+HTTP Layer        -> app/api/v1/endpoints/
+Validation Layer  -> app/schemas/
+Business Layer    -> app/services/
+Data Layer        -> app/models/ + app/database/database.py
 Database          -> SQLite app.db
 ```

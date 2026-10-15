@@ -29,12 +29,11 @@ from sqlalchemy import select
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from database import SessionLocal  # noqa: E402
-from models.user import User  # noqa: E402
-from services.audit_service import AuditService  # noqa: E402
-from services.rbac import Role  # noqa: E402
-from services.security import hash_password, password_problems  # noqa: E402
-
+from app.core.security import hash_password, password_problems  # noqa: E402
+from app.database.database import SessionLocal  # noqa: E402
+from app.models.user import User  # noqa: E402
+from app.services.audit_service import AuditService  # noqa: E402
+from app.services.rbac import Role  # noqa: E402
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)

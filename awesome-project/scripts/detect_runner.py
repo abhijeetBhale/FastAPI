@@ -3,7 +3,8 @@
 Owned by ``awesome-project`` but executed by the *detection* project's
 interpreter, because the two environments cannot be merged: this app's venv has
 no torch, and the detection venv carries ~5.5 GB of torch/ultralytics/open3d.
-The seam between them is this script — ``services/detection.py`` is the FastAPI
+The seam between them is this script — ``app/services/detection.py`` is the
+FastAPI
 side that invokes it.
 
 ``CARGO_PROJECT_DIR`` overrides the detector location, which defaults to the

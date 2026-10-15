@@ -26,7 +26,7 @@ from sqlalchemy.engine import make_url
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import get_settings  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 

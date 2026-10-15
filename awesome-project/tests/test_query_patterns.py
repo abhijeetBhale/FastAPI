@@ -9,8 +9,7 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-from api import API_PREFIX
-
+from app.api.v1 import API_PREFIX
 
 def count_queries() -> list[str]:
     """Collect SQL statements for the duration of a test."""
@@ -299,8 +298,7 @@ class TestIdempotency:
 
 class TestAuditTrail:
     def test_creation_is_audited(self, admin_client, seeded, db):
-        from models.audit_log import AuditLog
-
+        from app.models.audit_log import AuditLog
         insp = seeded[0]
         entries = (
             db.query(AuditLog)
@@ -311,8 +309,7 @@ class TestAuditTrail:
         assert any(e.action == "create" for e in entries)
 
     def test_status_change_is_audited(self, admin_client, seeded, db):
-        from models.audit_log import AuditLog
-
+        from app.models.audit_log import AuditLog
         insp = seeded[0]
         admin_client.patch(f"{API_PREFIX}/admin/submissions/{insp['id']}", json={"status": "approved"})
         actions = [
@@ -365,8 +362,7 @@ class TestTags:
         assert {t["name"] for t in r["tags"]} == {"urgent", "heavy"}
 
     def test_tags_are_reused_not_duplicated(self, admin_client, seeded, db):
-        from models.tag import Tag
-
+        from app.models.tag import Tag
         names = [t.name for t in db.query(Tag).order_by(Tag.name).all()]
         assert names.count("urgent") == 1
 
